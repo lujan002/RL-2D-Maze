@@ -20,10 +20,11 @@ class RewardLoggingCallback(BaseCallback):
         return True
     
 env_id = 'ContinuousMazeEnv-v1'
-env = make_vec_env(env_id, n_envs=1)
-model = PPO('MlpPolicy', env, verbose=1)
+env = gym.make('ContinuousMazeEnv-v1', render_mode=None)
+vec_env = make_vec_env(env_id, n_envs=1)
+model = PPO('MlpPolicy', vec_env, verbose=1)
 
-# Define the callback with a frequency of 1000 steps
+# Define the callback with a frequency of x steps
 reward_logging_callback = RewardLoggingCallback(check_freq=500)
 
 # Train the model
