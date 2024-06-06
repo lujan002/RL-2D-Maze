@@ -36,16 +36,18 @@ class RayCastClosestCallback(Box2D.b2RayCastCallback):
         return fraction
 
 class ContinuousMazeEnv(gym.Env):
-    metadata = {'render_modes': ['human']}
+    metadata = {'render_modes': ['human', 'rgb_array']}
 
-    def __init__(self):
+    def __init__(self, render_mode=None):
         super(ContinuousMazeEnv, self).__init__()
 
+        self.render_mode = render_mode
+        
         # Define action and observation space
         self.action_space = spaces.Box(low=-1, high=1, shape=(3,), dtype=np.float32)
 
-        # Continuous observation space: [position_x, position_y, velocity_x, velocity_y]
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(4 + 2 * 10,), dtype=np.float32)
+        # Continuous observation space: [position_x, position_y, velocity_x, velocity_y, orientation, lidar_array]
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(4 + 1 + 9,), dtype=np.float32)
 
         # Pygame initialization
         self.cell_size = 40  # Each cell is _x_ pixels
@@ -230,21 +232,22 @@ class ContinuousMazeEnv(gym.Env):
             lidar_reading = round(lidar_reading,1)
             lidar_readings.append(lidar_reading)
         # print(f"LiDAR readings: {lidar_readings}")
+        '''
         # Create a text surface
         text = self.font.render(f"LiDAR readings: {lidar_readings}", True, (255, 255, 255))
         # Draw the text at the bottom of the screen
         self.screen.blit(text, (10, self.screen.get_height() - text.get_height() - 10))
         # Update the display
         pygame.display.flip()
-        
+        '''
         state = np.array([self.agent.position[0], self.agent.position[1], 
                           self.agent.linearVelocity[0], self.agent.linearVelocity[1], 
-                          self.agent.angularVelocity] 
+                          self.agent_orientation] 
                           + lidar_readings, 
                           dtype=np.float32)
 
         # Define reward and done
-        reward = -np.sqrt(self.agent.position[0]**2 + self.agent.position[1]**2)  # Example reward: negative distance from the origin
+        reward = np.sqrt(self.agent.position[0]**2 + self.agent.position[1]**2)  # Example reward: positive distance from the origin
         terminated = False  # Define your termination condition
         truncated = False  # Define your truncation condition (for max steps, etc.)
 
@@ -267,7 +270,11 @@ class ContinuousMazeEnv(gym.Env):
             distance = self.cast_ray(angle)
             lidar_readings.append(distance)
 
-        initial_state = np.array([self.agent.position[0], self.agent.position[1], 0, 0] + lidar_readings, dtype=np.float32)
+        initial_state = np.array([self.agent.position[0], self.agent.position[1], 
+                                  self.agent.linearVelocity[0], self.agent.linearVelocity[1], 
+                                  self.agent_orientation] 
+                                  + lidar_readings, 
+                                  dtype=np.float32)
         return initial_state, {}
 
     def render(self, mode='human'):
@@ -344,6 +351,7 @@ try:
     register(
         id='ContinuousMazeEnv-v1',
         entry_point='continuous_maze_env:ContinuousMazeEnv',
+        max_episode_steps=300,
     )
     print("Environment `ContinuousMazeEnv-v1` registered successfully.")
 except Exception as e:
