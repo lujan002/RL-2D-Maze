@@ -7,6 +7,7 @@ import pygame
 from pygame.locals import QUIT
 import random
 from Maze import Maze
+import time
 
 # Maze generation functions
 def generate_maze(width, height):
@@ -36,7 +37,7 @@ class RayCastClosestCallback(Box2D.b2RayCastCallback):
         return fraction
 
 class ContinuousMazeEnv(gym.Env):
-    metadata = {'render_modes': ['human', 'rgb_array']}
+    metadata = {'render_modes': ['human', 'rgb_array'], 'render_fps': 60}
 
     def __init__(self, render_mode=None):
         super(ContinuousMazeEnv, self).__init__()
@@ -53,8 +54,8 @@ class ContinuousMazeEnv(gym.Env):
         self.cell_size = 40  # Each cell is _x_ pixels
         self.grid_width = 9  # _ cells wide
         self.grid_height = 9  # _ cells tall
-        self.screen_width = self.cell_size * (self.grid_width * 2  + 1)
-        self.screen_height = self.cell_size * (self.grid_height * 2  + 1)
+        self.screen_width = (self.cell_size * (self.grid_width * 2  + 1) // 16) * 16
+        self.screen_height = (self.cell_size * (self.grid_height * 2  + 1) // 16) * 16
         self.scale = 1  # Pixels per meter (since cell size is already in pixels)
 
         # Initialize the Box2D world
@@ -74,7 +75,7 @@ class ContinuousMazeEnv(gym.Env):
         half_height = 10
         self.agent_vertices = [(-half_width, -half_height), (half_width, -half_height), (half_width, half_height), (-half_width, half_height)]
         self.agent.CreatePolygonFixture(vertices=self.agent_vertices, density=1.0, friction=0.3)
-        print(f"Agent created at position: {self.agent.position}")  # Debugging line
+        # print(f"Agent created at position: {self.agent.position}")  # Debugging line
 
         # setting constants for angular rotation physics
         self.agent.mass = 100
@@ -160,25 +161,43 @@ class ContinuousMazeEnv(gym.Env):
                             return True
         return False
     
+    # def cast_ray(self, angle):
+    #     start_point = vec2(self.agent.position)
+    #     max_distance = 100.0
+    #     step_size = 5.0  # The step size for checking along the ray
+    #     direction = vec2(np.cos(angle), np.sin(angle))
+        
+    #     # Iterate along the ray path in small steps
+    #     for step in np.arange(0, max_distance, step_size):
+    #         end_point = start_point + step * direction
+    #         if self.is_lidar_collision(end_point):
+    #             # Return the distance to the collision point
+    #             distance = np.linalg.norm(end_point - start_point)
+    #             return distance
+
+    #     if not self.is_lidar_collision(end_point):
+    #         return max_distance
+    
     def cast_ray(self, angle):
         start_point = vec2(self.agent.position)
-        max_distance = 100.0
-        step_size = 5.0  # The step size for checking along the ray
         direction = vec2(np.cos(angle), np.sin(angle))
-        
-        # Iterate along the ray path in small steps
-        for step in np.arange(0, max_distance, step_size):
-            end_point = start_point + step * direction
-            if self.is_lidar_collision(end_point):
-                # Return the distance to the collision point
-                distance = np.linalg.norm(end_point - start_point)
-                return distance
 
-        if not self.is_lidar_collision(end_point):
-            return max_distance
+        # Binary search parameters
+        left, right = 0, 100.0  # Max distance of 100 units
+        precision = 0.1
+
+        while right - left > precision:
+            mid = (left + right) / 2
+            mid_point = start_point + mid * direction
+            if self.is_lidar_collision(mid_point):
+                right = mid
+            else:
+                left = mid
+
+        return (left + right) / 2
 
     def step(self, action):
-        print(f"Received action: {action}, shape: {np.shape(action)}")
+        # print(f"Received action: {action}, shape: {np.shape(action)}")
         # Store the old position in case we need to revert
         old_position = np.array(self.agent.position)
 
@@ -191,7 +210,7 @@ class ContinuousMazeEnv(gym.Env):
                                      (forward_velocity * np.sin(self.agent_orientation) + side_velocity * np.cos(self.agent_orientation))) #y
         self.agent.angularVelocity = action[2] * 30  # Apply the rotation action     
         self.agent.torque = self.agent.angularVelocity * self.agent.moment_of_inertia
-        print(f"orientation is {self.agent_orientation}") 
+        # print(f"orientation is {self.agent_orientation}") 
 
         # Incremental rotation checking
         rotation_steps = 10
@@ -219,18 +238,22 @@ class ContinuousMazeEnv(gym.Env):
             # If collision, revert to old position
             self.agent.position = old_position
             self.agent.linearVelocity = (0, 0)
-            print("collision detected")
+            # print("collision detected")
 
         self.agent.ApplyTorque(self.agent.torque, wake=True)
 
         # Perform ray casting
+        # start_time = time.time()
         num_rays = 9
         angles = np.linspace(0 + self.agent_orientation, np.pi + self.agent_orientation, num_rays, endpoint=True)
-        lidar_readings = []
-        for angle in angles:
-            lidar_reading = self.cast_ray(angle)
-            lidar_reading = round(lidar_reading,1)
-            lidar_readings.append(lidar_reading)
+        # lidar_readings = []
+        # for angle in angles:
+        #     lidar_reading = self.cast_ray(angle)
+        #     lidar_reading = round(lidar_reading,1)
+        #     lidar_readings.append(lidar_reading)
+        self.lidar_readings = [self.cast_ray(angle) for angle in angles]
+        # end_time = time.time()
+        # print(f"Optimized lidar calculation time: {end_time - start_time} seconds")
         # print(f"LiDAR readings: {lidar_readings}")
         '''
         # Create a text surface
@@ -243,7 +266,7 @@ class ContinuousMazeEnv(gym.Env):
         state = np.array([self.agent.position[0], self.agent.position[1], 
                           self.agent.linearVelocity[0], self.agent.linearVelocity[1], 
                           self.agent_orientation] 
-                          + lidar_readings, 
+                          + self.lidar_readings, 
                           dtype=np.float32)
 
         # Define reward and done
@@ -261,23 +284,25 @@ class ContinuousMazeEnv(gym.Env):
         self.agent.linearVelocity = (0, 0)
         self.agent.angularVelocity = 0  # Reset angular velocity
         self.agent_orientation = 0.0  # Reset orientation
-        print(f"Agent reset to position: {self.agent.position}")
+        # print(f"Agent reset to position: {self.agent.position}")
 
         num_rays = 9
         angles = np.linspace(0, np.pi + self.agent_orientation, num_rays, endpoint=True)
-        lidar_readings = []
-        for angle in angles:
-            distance = self.cast_ray(angle)
-            lidar_readings.append(distance)
+        # lidar_readings = []
+        # for angle in angles:
+        #     distance = self.cast_ray(angle)
+        #     lidar_readings.append(distance)
+        self.lidar_readings = [self.cast_ray(angle) for angle in angles]
+
 
         initial_state = np.array([self.agent.position[0], self.agent.position[1], 
                                   self.agent.linearVelocity[0], self.agent.linearVelocity[1], 
                                   self.agent_orientation] 
-                                  + lidar_readings, 
+                                  + self.lidar_readings, 
                                   dtype=np.float32)
         return initial_state, {}
 
-    def render(self, mode='human'):
+    def render(self):
         if self.screen is None:
             pygame.init()
             self.screen = pygame.display.set_mode((self.screen_width, self.screen_height))
@@ -310,7 +335,7 @@ class ContinuousMazeEnv(gym.Env):
 
         # Draw agent
         position = self.scale * np.array(self.agent.position)
-        print(f"Rendering agent at position: {position}")  # Debugging line
+        # print(f"Rendering agent at position: {position}")  # Debugging line
 
         # Rotate and translate vertices to the global frame
         global_vertices = []
@@ -328,16 +353,29 @@ class ContinuousMazeEnv(gym.Env):
             print(f"Agent position {position} is out of bounds")
 
         # Render LiDAR rays
+        # num_rays = 9
+        # angles = np.linspace(0 + self.agent_orientation, np.pi + self.agent_orientation, num_rays, endpoint=True)
+        # for angle in angles:
+        #     start_point = self.scale * np.array(self.agent.position)
+        #     max_distance = self.cast_ray(angle)
+        #     end_point = start_point + self.scale * max_distance * np.array([np.cos(angle), np.sin(angle)])
+        #     pygame.draw.line(self.screen, (0, 0, 255), start_point, end_point, 1)  # Blue lines for LiDAR rays
+
+        # Render LiDAR rays
         num_rays = 9
         angles = np.linspace(0 + self.agent_orientation, np.pi + self.agent_orientation, num_rays, endpoint=True)
-        for angle in angles:
+        for angle, distance in zip(angles, self.lidar_readings):
             start_point = self.scale * np.array(self.agent.position)
-            max_distance = self.cast_ray(angle)
-            end_point = start_point + self.scale * max_distance * np.array([np.cos(angle), np.sin(angle)])
+            end_point = start_point + self.scale * distance * np.array([np.cos(angle), np.sin(angle)])
             pygame.draw.line(self.screen, (0, 0, 255), start_point, end_point, 1)  # Blue lines for LiDAR rays
 
         pygame.display.flip()
-        self.clock.tick(60)
+        self.clock.tick(self.metadata['render_fps'])
+
+        if self.render_mode == 'rgb_array':
+            return np.transpose(np.array(pygame.surfarray.pixels3d(self.screen)), axes=(1, 0, 2))
+        elif self.render_mode == 'human':
+            return None
 
     def close(self):
         if self.screen is not None:
