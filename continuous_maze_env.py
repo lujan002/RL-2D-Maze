@@ -47,13 +47,13 @@ class ContinuousMazeEnv(gym.Env):
         # Define action and observation space
         self.action_space = spaces.Box(low=-1, high=1, shape=(3,), dtype=np.float32)
 
-        # Continuous observation space: [position_x, position_y, velocity_x, velocity_y, orientation, lidar_array]
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(4 + 1 + 9,), dtype=np.float32)
+        # Continuous observation space: [position_x, position_y, velocity_x, velocity_y, orientation, goal_x, goal_y, lidar_array]
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(2 + 2 + 1 + 2 + 9,), dtype=np.float32)
 
         # Pygame initialization
         self.cell_size = 40  # Each cell is _x_ pixels
-        self.grid_width = 9  # _ cells wide
-        self.grid_height = 9  # _ cells tall
+        self.grid_width = 5  # _ cells wide
+        self.grid_height = 5  # _ cells tall
         self.screen_width = (self.cell_size * (self.grid_width * 2  + 1) // 16) * 16
         self.screen_height = (self.cell_size * (self.grid_height * 2  + 1) // 16) * 16
         self.scale = 1  # Pixels per meter (since cell size is already in pixels)
@@ -90,6 +90,20 @@ class ContinuousMazeEnv(gym.Env):
         self.viewer = None
         self.font = None
         self.agent_orientation = 0.0
+        self.timesteps = 0.0
+        self.goal_position = self.generate_goal()
+
+        self.visit_count = {}
+
+    def generate_goal(self):
+        while True:
+            # Generate a random position within the maze boundaries
+            goal_x = random.uniform(0, self.screen_width / self.scale)
+            goal_y = random.uniform(0, self.screen_height / self.scale)
+            goal_position = (goal_x, goal_y)
+            # Ensure the goal is not in a wall
+            if not self.is_agent_collision(goal_position):
+                return goal_position
 
     def is_lidar_collision(self, position):
         agent_x, agent_y = position
@@ -198,6 +212,7 @@ class ContinuousMazeEnv(gym.Env):
 
     def step(self, action):
         # print(f"Received action: {action}, shape: {np.shape(action)}")
+        self.timesteps += 1
         # Store the old position in case we need to revert
         old_position = np.array(self.agent.position)
 
@@ -265,27 +280,74 @@ class ContinuousMazeEnv(gym.Env):
         '''
         state = np.array([self.agent.position[0], self.agent.position[1], 
                           self.agent.linearVelocity[0], self.agent.linearVelocity[1], 
-                          self.agent_orientation] 
+                          self.agent_orientation,
+                          self.goal_position[0], self.goal_position[1]] 
                           + self.lidar_readings, 
                           dtype=np.float32)
 
-        # Define reward and done
-        reward = np.sqrt(self.agent.position[0]**2 + self.agent.position[1]**2)  # Example reward: positive distance from the origin
-        terminated = False  # Define your termination condition
+      
+        # Reward calculation
+        max_distance_to_goal = np.linalg.norm(np.array(self.agent.initial_position) - np.array(self.goal_position))
+        distance_to_goal = np.linalg.norm(np.array(self.agent.position) - np.array(self.goal_position))
+        normalized_distance_to_goal = 1 - distance_to_goal/max_distance_to_goal # value between 0-1
+        # old_distance_to_goal = np.linalg.norm(np.array(old_position) - np.array(self.goal_position))
+        # Initialize reward variables 
+        reward_goal = 0.0
+        reward_collision_penalty = 0.0
+
+        # Large reward for reaching the goal
+        if distance_to_goal < 10:  # Assuming a small radius around the goal
+            reward_goal = 1000.0
+            terminated = True
+            print("Reached the goal in {self.timesteps} timesteps!")
+        else:
+            terminated = False
+
+        # Time penalty
+        reward_time_penalty = self.timesteps * -0.1
+
+        # Reward for moving closer to the goal
+        reward_proximity = (#old_distance_to_goal - 
+            normalized_distance_to_goal * 1000)
+
+        # Penalty for collisions
+        if self.is_agent_collision(new_position):
+            reward_collision_penalty = 10.0
+
+        # Visit count penalty
+        current_cell = (int(self.agent.position[0] / self.cell_size), int(self.agent.position[1] / self.cell_size))
+        if current_cell not in self.visit_count:
+            self.visit_count[current_cell] = 0
+        self.visit_count[current_cell] += 1
+        reward_visit_penalty = 50 - 0.1 * self.visit_count[current_cell]
+
+        total_reward = reward_goal + reward_time_penalty + reward_proximity + reward_collision_penalty + reward_visit_penalty
+
         truncated = False  # Define your truncation condition (for max steps, etc.)
 
-        return state, reward, terminated, truncated, {}
+        # Log reward components
+        # self.log_reward_components(reward_goal, reward_time_penalty, reward_proximity, reward_collision_penalty, reward_visit_penalty)
+
+        return state, total_reward, terminated, truncated, {}
+    
+    def log_reward_components(self, reward_goal, reward_time_penalty, reward_proximity, reward_collision, reward_visit_penalty):
+        print(f"Reward breakdown -> Goal: {reward_goal}, Time Penalty: {reward_time_penalty}, Proximity: {reward_proximity}, Collision: {reward_collision}, Visit: {reward_visit_penalty}")
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         # initial_position = (((self.cell_size/4)) / self.scale, ((self.cell_size/4)) / self.scale)
-        initial_position = (50,50)
-        self.agent.position = initial_position
+        self.agent.initial_position = (50,50)
         self.agent.linearVelocity = (0, 0)
         self.agent.angularVelocity = 0  # Reset angular velocity
         self.agent_orientation = 0.0  # Reset orientation
         # print(f"Agent reset to position: {self.agent.position}")
+        # Reset goal position
+        self.goal_position = self.generate_goal()
 
+        # Reset cumulative penalties and counters
+        self.timesteps = 0.0
+        self.visit_count = {}  # Reset visit count
+        
         num_rays = 9
         angles = np.linspace(0, np.pi + self.agent_orientation, num_rays, endpoint=True)
         # lidar_readings = []
@@ -295,9 +357,10 @@ class ContinuousMazeEnv(gym.Env):
         self.lidar_readings = [self.cast_ray(angle) for angle in angles]
 
 
-        initial_state = np.array([self.agent.position[0], self.agent.position[1], 
+        initial_state = np.array([self.agent.initial_position[0], self.agent.initial_position[1], 
                                   self.agent.linearVelocity[0], self.agent.linearVelocity[1], 
-                                  self.agent_orientation] 
+                                  self.agent_orientation,
+                                  self.goal_position[0], self.goal_position[1]] 
                                   + self.lidar_readings, 
                                   dtype=np.float32)
         return initial_state, {}
@@ -345,12 +408,15 @@ class ContinuousMazeEnv(gym.Env):
             y_global = x_local * np.sin(self.agent_orientation) + y_local * np.cos(self.agent_orientation) + position[1]
             global_vertices.append((x_global, y_global))
 
-        # Check if the position is within the screen bounds
+        # Check if the agent position is within the screen bounds
         if 0 <= position[0] <= self.screen_width and 0 <= position[1] <= self.screen_height:
             # pygame.draw.circle(self.screen, (255, 0, 0), position, int(self.agent.fixtures[0].shape.radius * self.scale))
             pygame.draw.polygon(self.screen, (255, 0, 0), global_vertices)
         else:
             print(f"Agent position {position} is out of bounds")
+
+        # Render goal 
+        pygame.draw.circle(self.screen, (0,255,0), self.goal_position, radius = 10)
 
         # Render LiDAR rays
         # num_rays = 9
@@ -389,7 +455,7 @@ try:
     register(
         id='ContinuousMazeEnv-v1',
         entry_point='continuous_maze_env:ContinuousMazeEnv',
-        max_episode_steps=300,
+        max_episode_steps=500,
     )
     print("Environment `ContinuousMazeEnv-v1` registered successfully.")
 except Exception as e:
