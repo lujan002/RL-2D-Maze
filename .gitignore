@@ -3,3 +3,4 @@ requirements.txt
 __pycache__
 maze_agent.mp4
 proximity_reward_demo.png
+ppo_tensorboard
