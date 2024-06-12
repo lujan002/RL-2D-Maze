@@ -4,6 +4,7 @@ from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.callbacks import BaseCallback
 import numpy as np
 import time
+import yaml
 
 import continuous_maze_env
 
@@ -30,13 +31,20 @@ class RewardLoggingCallback(BaseCallback):
 env_id = 'ContinuousMazeEnv-v1'
 env = gym.make('ContinuousMazeEnv-v1', render_mode=None)
 vec_env = make_vec_env(env_id, n_envs=12)
-model = PPO('MlpPolicy', vec_env, verbose=1)
+
+# Load the YAML configuration file
+with open('ppo_config.yaml', 'r') as file:
+    config = yaml.safe_load(file)
+
+# Extract the PPO parameters from the configuration
+ppo_params = config['ppo']
+model = PPO(**ppo_params, env=vec_env, verbose=1)
 
 # Define the callback with a frequency of x steps
 reward_logging_callback = RewardLoggingCallback(check_freq=500)
 
 # Train the model
-model.learn(total_timesteps=100000, callback=reward_logging_callback)  # Adjust the number of timesteps as needed
+model.learn(total_timesteps=10000, callback=reward_logging_callback)  # Adjust the number of timesteps as needed
 
 # Save the model
 model.save("ppo_maze")
