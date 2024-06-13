@@ -22,7 +22,7 @@ print(f"Evaluation time: {time.time() - start_time} seconds")
 print(f"Mean reward: {mean_reward}, Std reward: {std_reward}")
 
 # Record a video
-video_length = 100
+video_length = 10000
 images = []
 
 # Close the evaluation environment and create a new one with rendering for video recording
@@ -32,13 +32,22 @@ env = gym.make(env_id, render_mode='rgb_array')  # This assumes the default rend
 start_time = time.time()
 obs, info = env.reset()
 for _ in range(video_length):
-    action, _ = model.predict(obs)
-    obs, _, _, _, _ = env.step(action)
+    if np.random.rand() < 0.1:  # 10% of the time take a random action
+        action = env.action_space.sample()
+    else:
+        action, _ = model.predict(obs)
+    print(f"Action: {action}")
+    obs, reward, done, _, info = env.step(action)
+    #print(f"Obs: {obs}, Reward: {reward}, Done: {done}")
+    print(f"Reward: {reward}")
+
     img = env.render()
     if img is not None and len(img.shape) == 3:  # Ensure img has correct dimensions
         images.append(img)
     else:
         print("Warning: Rendered image has unexpected shape")
+    if done:
+        obs, info = env.reset()
 
 print(f"Video recording time: {time.time() - start_time} seconds")
 
