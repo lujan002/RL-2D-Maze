@@ -39,10 +39,10 @@ class RayCastClosestCallback(Box2D.b2RayCastCallback):
 class ContinuousMazeEnv(gym.Env):
     metadata = {'render_modes': ['human', 'rgb_array'], 'render_fps': 60}
 
-    def __init__(self, render_mode=None):
+    def __init__(self, render_mode=None, seed=None):
         super(ContinuousMazeEnv, self).__init__()
-
         self.render_mode = render_mode
+        self.seed = seed
         
         # Define action and observation space
         self.action_space = spaces.Box(low=-1, high=1, shape=(3,), dtype=np.float32)
@@ -52,8 +52,8 @@ class ContinuousMazeEnv(gym.Env):
 
         # Pygame initialization
         self.cell_size = 40  # Each cell is _x_ pixels
-        self.grid_width = 5  # _ cells wide
-        self.grid_height = 5  # _ cells tall
+        self.grid_width = 3  # _ cells wide
+        self.grid_height = 3  # _ cells tall
         self.screen_width = (self.cell_size * (self.grid_width * 2  + 1) // 16) * 16
         self.screen_height = (self.cell_size * (self.grid_height * 2  + 1) // 16) * 16
         self.scale = 1  # Pixels per meter (since cell size is already in pixels)
@@ -71,9 +71,9 @@ class ContinuousMazeEnv(gym.Env):
         # self.agent.CreateCircleFixture(radius=10, density=1.0, friction=0.3)
 
         # Define the vertices of a rectangle centered at the agent's position
-        half_width = 7
-        half_height = 10
-        self.agent_vertices = [(-half_width, -half_height), (half_width, -half_height), (half_width, half_height), (-half_width, half_height)]
+        self.half_width = 7
+        self.half_height = 10
+        self.agent_vertices = [(-self.half_width, -self.half_height), (self.half_width, -self.half_height), (self.half_width, self.half_height), (-self.half_width, self.half_height)]
         self.agent.CreatePolygonFixture(vertices=self.agent_vertices, density=1.0, friction=0.3)
         # print(f"Agent created at position: {self.agent.position}")  # Debugging line
 
@@ -83,27 +83,33 @@ class ContinuousMazeEnv(gym.Env):
 
         self.maze_grid = generate_maze(self.grid_width, self.grid_height)
 
-        self.reset()
-
         self.screen = None
         self.clock = None
         self.viewer = None
         self.font = None
         self.agent_orientation = 0.0
         self.timesteps = 0.0
-        self.goal_position = self.generate_goal()
-
+        self.goal_position = self.generate_goal(self.seed)
+        self.previous_lidar_reward = 0.0
         self.visit_count = {}
 
-    def generate_goal(self):
+        self.reset()
+
+    def generate_goal(self, seed):
+        if seed is not None:
+            random.seed(seed)
         while True:
             # Generate a random position within the maze boundaries
             goal_x = random.uniform(0, self.screen_width / self.scale)
             goal_y = random.uniform(0, self.screen_height / self.scale)
-            goal_position = (goal_x, goal_y)
-            # Ensure the goal is not in a wall
-            if not self.is_agent_collision(goal_position):
-                return goal_position
+
+            # Define the upper left quadrant boundaries
+            upper_left_quadrant_x = self.screen_width / self.scale / 2
+            upper_left_quadrant_y = self.screen_height / self.scale / 2
+            
+            # Check if the goal is not in the upper left quadrant and not in a wall
+            if (goal_x >= upper_left_quadrant_x or goal_y >= upper_left_quadrant_y) and not self.is_agent_collision((goal_x, goal_y)):
+                return (goal_x, goal_y)
 
     def is_lidar_collision(self, position):
         agent_x, agent_y = position
@@ -134,6 +140,13 @@ class ContinuousMazeEnv(gym.Env):
                     if x + self.cell_size * 2 <= agent_x < x + self.cell_size * 3 and y + self.cell_size * 2 <= agent_y < y + self.cell_size * 3:
                         # print("agent is in a forbidden bottom right tile")
                         return True
+                    
+                    # Additional checks for bottom-left and top-right corners
+                    if x <= agent_x < x + self.cell_size and y + self.cell_size * 2 <= agent_y < y + self.cell_size * 3:
+                        return True
+                    if x + self.cell_size * 2 <= agent_x < x + self.cell_size * 3 and y <= agent_y < y + self.cell_size:
+                        return True
+                    
         return False
     
     def is_agent_collision(self, position):
@@ -173,6 +186,12 @@ class ContinuousMazeEnv(gym.Env):
                         if x + self.cell_size * 2 <= agent_x < x + self.cell_size * 3 and y + self.cell_size * 2 <= agent_y < y + self.cell_size * 3:
                             # print("agent is in a forbidden bottom right tile")
                             return True
+                        
+                        # Additional checks for bottom-left and top-right corners
+                        if x <= agent_x < x + self.cell_size and y + self.cell_size * 2 <= agent_y < y + self.cell_size * 3:
+                            return True
+                        if x + self.cell_size * 2 <= agent_x < x + self.cell_size * 3 and y <= agent_y < y + self.cell_size:
+                            return True
         return False
     
     # def cast_ray(self, angle):
@@ -203,7 +222,14 @@ class ContinuousMazeEnv(gym.Env):
         while right - left > precision:
             mid = (left + right) / 2
             mid_point = start_point + mid * direction
-            if self.is_lidar_collision(mid_point):
+            quarter_point = start_point + (mid/2) * direction
+            # Ensure mid_point is within bounds
+            if mid_point[0] <= 0 or mid_point[0] >= self.screen_width or mid_point[1] <= 0 or mid_point[1] >= self.screen_height:
+                #print('lidar end out of bounds')
+                right = mid  # If out of bounds, adjust right to narrow the search
+                continue
+
+            if self.is_lidar_collision(mid_point) or self.is_lidar_collision(quarter_point): #check quarter point for edge cases where mid point is not in a wall but quarter point is
                 right = mid
             else:
                 left = mid
@@ -230,11 +256,13 @@ class ContinuousMazeEnv(gym.Env):
         # Incremental rotation checking
         rotation_steps = 10
         incremental_rotation = self.agent.angularVelocity * (0.2 / 60) / rotation_steps
+        collision_detected = False
         for _ in range(rotation_steps):
             self.agent_orientation += incremental_rotation
             if self.is_agent_collision(self.agent.position):
                 self.agent_orientation -= incremental_rotation
                 self.agent.angularVelocity = 0
+                collision_detected=True
                 break
 
         # Update agent orientation
@@ -253,6 +281,7 @@ class ContinuousMazeEnv(gym.Env):
             # If collision, revert to old position
             self.agent.position = old_position
             self.agent.linearVelocity = (0, 0)
+            collision_detected = True
             # print("collision detected")
 
         self.agent.ApplyTorque(self.agent.torque, wake=True)
@@ -269,7 +298,7 @@ class ContinuousMazeEnv(gym.Env):
         self.lidar_readings = [self.cast_ray(angle) for angle in angles]
         # end_time = time.time()
         # print(f"Optimized lidar calculation time: {end_time - start_time} seconds")
-        # print(f"LiDAR readings: {lidar_readings}")
+        #print(f"LiDAR readings: {self.lidar_readings}")
         '''
         # Create a text surface
         text = self.font.render(f"LiDAR readings: {lidar_readings}", True, (255, 255, 255))
@@ -285,56 +314,81 @@ class ContinuousMazeEnv(gym.Env):
                           + self.lidar_readings, 
                           dtype=np.float32)
 
+        # Round the state to one decimal place
+        state = np.round(state, 1)
       
         # Reward calculation
         max_distance_to_goal = np.linalg.norm(np.array(self.agent.initial_position) - np.array(self.goal_position))
         distance_to_goal = np.linalg.norm(np.array(self.agent.position) - np.array(self.goal_position))
         normalized_distance_to_goal = 1 - distance_to_goal/max_distance_to_goal # value between 0-1
-        # old_distance_to_goal = np.linalg.norm(np.array(old_position) - np.array(self.goal_position))
+        old_distance_to_goal = np.linalg.norm(np.array(old_position) - np.array(self.goal_position))
         # Initialize reward variables 
         reward_goal = 0.0
         reward_collision_penalty = 0.0
+        reward_visit = 0.0
+        reward_forward = 0.0
 
         # Large reward for reaching the goal
         if distance_to_goal < 10:  # Assuming a small radius around the goal
-            reward_goal = 1000.0
+            reward_goal = 1000
             terminated = True
-            print("Reached the goal in {self.timesteps} timesteps!")
+            print(f"Reached the goal in {self.timesteps} timesteps!")
         else:
             terminated = False
 
         # Time penalty
-        reward_time_penalty = self.timesteps * -0.1
+        reward_time_penalty = -0.001
 
         # Reward for moving closer to the goal
-        reward_proximity = (#old_distance_to_goal - 
-            normalized_distance_to_goal * 1000)
+        reward_proximity = (old_distance_to_goal -distance_to_goal)
+        #print(f"Reward Proximity: {reward_proximity}, Distance to Goal: {distance_to_goal}")
 
         # Penalty for collisions
-        if self.is_agent_collision(new_position):
-            reward_collision_penalty = 10.0
+        if collision_detected:
+            reward_collision_penalty = -0.1
+        #print(f"Collision Penalty: {reward_collision_penalty}")
 
         # Visit count penalty
         current_cell = (int(self.agent.position[0] / self.cell_size), int(self.agent.position[1] / self.cell_size))
         if current_cell not in self.visit_count:
             self.visit_count[current_cell] = 0
+            reward_visit = 0
         self.visit_count[current_cell] += 1
-        reward_visit_penalty = 50 - 0.1 * self.visit_count[current_cell]
 
-        total_reward = reward_goal + reward_time_penalty + reward_proximity + reward_collision_penalty + reward_visit_penalty
+        # LiDAR based reward
+        current_lidar_reward = 0.0
+        lidar_threshold = 20.0  # Define a threshold for considering a distance as "too close"
+        for distance in self.lidar_readings:
+            if distance < lidar_threshold:
+                current_lidar_reward = (lidar_threshold - (self.half_height + self.half_width) / 2 - distance) * 0.05
+        reward_lidar = current_lidar_reward - self.previous_lidar_reward
+        self.previous_lidar_reward = current_lidar_reward  # Update for the next step
+        #print(f"LiDAR Reward Difference: {reward_lidar}")
+
+        # Move forward reward
+        if action[1] > 0:
+            reward_forward = 0.0 # Small reward to encourage the agent to move forward
+        #print(f"Reward forward: {reward_forward}")
+
+        
+
+        total_reward = reward_goal + reward_time_penalty + reward_proximity + reward_collision_penalty + reward_visit + reward_lidar + reward_forward
 
         truncated = False  # Define your truncation condition (for max steps, etc.)
 
         # Log reward components
-        # self.log_reward_components(reward_goal, reward_time_penalty, reward_proximity, reward_collision_penalty, reward_visit_penalty)
+        #self.log_reward_components(reward_goal, reward_time_penalty, reward_proximity, reward_collision_penalty, reward_visit, reward_lidar, reward_forward)
 
         return state, total_reward, terminated, truncated, {}
     
-    def log_reward_components(self, reward_goal, reward_time_penalty, reward_proximity, reward_collision, reward_visit_penalty):
-        print(f"Reward breakdown -> Goal: {reward_goal}, Time Penalty: {reward_time_penalty}, Proximity: {reward_proximity}, Collision: {reward_collision}, Visit: {reward_visit_penalty}")
+    def log_reward_components(self, reward_goal, reward_time_penalty, reward_proximity, reward_collision, reward_visit, reward_lidar, reward_forward):
+        print(f"Reward breakdown -> Goal: {reward_goal}, Time Penalty: {reward_time_penalty}, Proximity: {reward_proximity}, Collision: {reward_collision}, Visit: {reward_visit}, LiDAR: {reward_lidar}, Forward: {reward_forward}")
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
+        if seed is not None:
+            np.random.seed(seed)
+            random.seed(seed)
         # initial_position = (((self.cell_size/4)) / self.scale, ((self.cell_size/4)) / self.scale)
         self.agent.initial_position = (50,50)
         self.agent.linearVelocity = (0, 0)
@@ -342,7 +396,7 @@ class ContinuousMazeEnv(gym.Env):
         self.agent_orientation = 0.0  # Reset orientation
         # print(f"Agent reset to position: {self.agent.position}")
         # Reset goal position
-        self.goal_position = self.generate_goal()
+        self.goal_position = self.generate_goal(seed)
 
         # Reset cumulative penalties and counters
         self.timesteps = 0.0
@@ -363,6 +417,10 @@ class ContinuousMazeEnv(gym.Env):
                                   self.goal_position[0], self.goal_position[1]] 
                                   + self.lidar_readings, 
                                   dtype=np.float32)
+        
+        # Round the initial state to one decimal place
+        initial_state = np.round(initial_state, 1)
+
         return initial_state, {}
 
     def render(self):
@@ -455,7 +513,7 @@ try:
     register(
         id='ContinuousMazeEnv-v1',
         entry_point='continuous_maze_env:ContinuousMazeEnv',
-        max_episode_steps=500,
+        max_episode_steps=512,
     )
     print("Environment `ContinuousMazeEnv-v1` registered successfully.")
 except Exception as e:
