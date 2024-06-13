@@ -30,24 +30,56 @@ class RewardLoggingCallback(BaseCallback):
     
 env_id = 'ContinuousMazeEnv-v1'
 env = gym.make('ContinuousMazeEnv-v1', render_mode=None)
-vec_env = make_vec_env(env_id, n_envs=12)
+vec_env = make_vec_env(env_id, n_envs=64)
+
 
 # Load the YAML configuration file
 with open('ppo_config.yaml', 'r') as file:
     config = yaml.safe_load(file)
 
+
+# Print the loaded configuration to verify
+print("Loaded configuration:")
+print(yaml.dump(config, default_flow_style=False))
+
+# Ensure all necessary parameters are present
+required_keys = ['policy', 'n_steps', 'batch_size', 'n_epochs', 'gamma', 'gae_lambda', 'clip_range',
+                'ent_coef', 'learning_rate', 'vf_coef', 'max_grad_norm', 'use_sde', 'sde_sample_freq',
+                'target_kl', 'tensorboard_log', 'policy_kwargs', 'seed', 'device',
+                '_init_setup_model']
+
+missing_keys = [key for key in required_keys if key not in config['ppo']]
+if missing_keys:
+    raise ValueError(f"Missing required PPO parameters in config: {missing_keys}")
+
+
+
+
 # Extract the PPO parameters from the configuration
 ppo_params = config['ppo']
+
+# Convert certain keys to None if they are the string "None"
+for key in ['seed', 'target_kl', 'policy_kwargs']:
+    if ppo_params[key] == "None":
+        ppo_params[key] = None
+
+# Create the PPO model with extracted parameters
 model = PPO(**ppo_params, env=vec_env, verbose=1)
 
+# Print device information
+print(f"Model device: {model.device}")
+
 # Define the callback with a frequency of x steps
-reward_logging_callback = RewardLoggingCallback(check_freq=500)
+reward_logging_callback = RewardLoggingCallback(check_freq=10000)
 
 # Train the model
-model.learn(total_timesteps=10000, callback=reward_logging_callback)  # Adjust the number of timesteps as needed
+model.learn(total_timesteps=100000, callback=reward_logging_callback)  # Adjust the number of timesteps as needed
 
 # Save the model
 model.save("ppo_maze")
 
 # Close the environment
 env.close()
+
+
+    
