@@ -34,7 +34,7 @@ try:
     print("Environment `ContinuousMazeEnv-v1` created successfully.")
     wrapped_env = FlattenObservation(env)
     print("Environment `ContinuousMazeEnv-v1` wrapped successfully.")
-    observation, info = wrapped_env.reset()
+    observation, info = wrapped_env.reset(seed=123)
     wrapped_env.render()
     print("Environment reset successfully.")
     print(observation, info)
