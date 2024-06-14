@@ -2,6 +2,7 @@ import gymnasium as gym
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.vec_env import VecNormalize
 import numpy as np
 import time
 import yaml
@@ -26,12 +27,14 @@ class RewardLoggingCallback(BaseCallback):
             elapsed_time = current_time - self.start_time
             print(f"Step {self.num_timesteps}: Mean Reward: {mean_reward}, Time Elapsed: {elapsed_time:.2f} seconds")
             elapsed_time = current_time - self.start_time
+            actions = self.model.rollout_buffer.actions
+            print(f"Sample actions: {actions}")
         return True
     
 env_id = 'ContinuousMazeEnv-v1'
 env = gym.make('ContinuousMazeEnv-v1', render_mode=None)
 vec_env = make_vec_env(env_id, n_envs=64)
-
+vec_env_norm = VecNormalize(vec_env, norm_obs=True, norm_reward=True, clip_obs=10.)
 
 # Load the YAML configuration file
 with open('ppo_config.yaml', 'r') as file:
@@ -64,19 +67,36 @@ for key in ['seed', 'target_kl', 'policy_kwargs']:
         ppo_params[key] = None
 
 # Create the PPO model with extracted parameters
-model = PPO(**ppo_params, env=vec_env, verbose=1)
+model = PPO(**ppo_params, env=vec_env_norm, verbose=1)
 
 # Print device information
 print(f"Model device: {model.device}")
 
 # Define the callback with a frequency of x steps
-reward_logging_callback = RewardLoggingCallback(check_freq=10000)
+reward_logging_callback = RewardLoggingCallback(check_freq=100000)
 
 # Train the model
-model.learn(total_timesteps=100000, callback=reward_logging_callback)  # Adjust the number of timesteps as needed
+model.learn(total_timesteps=1000000, callback=reward_logging_callback)  # Adjust the number of timesteps as needed
+
+import sys
+np.set_printoptions(threshold=sys.maxsize)
+
+#do this only for the first vec env
+original_obs = vec_env_norm.get_original_obs()[0:4]
+print(f"Sample of original obs: {original_obs}")
+norm_obs = vec_env_norm.normalize_obs(original_obs)
+print(f"Sample of normalized obs: {norm_obs}")
+
+original_rew = vec_env_norm.get_original_reward()[0:4]
+print(f"Sample of original reward: {original_rew}")
+norm_rew = vec_env_norm.normalize_reward(original_rew)
+print(f"Sample of normalized reward: {norm_rew}")
 
 # Save the model
-model.save("ppo_maze")
+try:
+    model.save("ppo_maze")
+except Exception as e:
+    print(f"Could not save model: {e}")
 
 # Close the environment
 env.close()
