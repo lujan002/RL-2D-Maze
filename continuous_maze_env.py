@@ -66,8 +66,8 @@ class ContinuousMazeEnv(gym.Env):
         self.agent = self.world.CreateDynamicBody(
             # position=(((self.cell_size/4)) / self.scale, ((self.cell_size/4)) / self.scale), 
             position = (50,50),
-            linearDamping=0.5, 
-            angularDamping=0.5)
+            linearDamping=0.0, 
+            angularDamping=0.0)
         # self.agent.CreateCircleFixture(radius=10, density=1.0, friction=0.3)
 
         # Define the vertices of a rectangle centered at the agent's position
@@ -78,7 +78,7 @@ class ContinuousMazeEnv(gym.Env):
         # print(f"Agent created at position: {self.agent.position}")  # Debugging line
 
         # setting constants for angular rotation physics
-        self.agent.mass = 100
+        self.agent.mass = 1
         self.agent.moment_of_inertia = self.agent.mass * (self.agent.fixtures[0].shape.radius ** 2) / 2
 
         self.maze_grid = generate_maze(self.grid_width, self.grid_height)
@@ -87,7 +87,7 @@ class ContinuousMazeEnv(gym.Env):
         self.clock = None
         self.viewer = None
         self.font = None
-        self.agent_orientation = 0.0
+        self.agent.orientation = 0.0
         self.timesteps = 0.0
         self.goal_position = self.generate_goal(self.seed)
         self.previous_lidar_reward = 0.0
@@ -154,8 +154,8 @@ class ContinuousMazeEnv(gym.Env):
         global_vertices = []
         for vertex in self.agent_vertices:
             x_local, y_local = vertex
-            x_global = x_local * np.cos(self.agent_orientation) - y_local * np.sin(self.agent_orientation) + position[0]
-            y_global = x_local * np.sin(self.agent_orientation) + y_local * np.cos(self.agent_orientation) + position[1]
+            x_global = x_local * np.cos(self.agent.orientation) - y_local * np.sin(self.agent.orientation) + position[0]
+            y_global = x_local * np.sin(self.agent.orientation) + y_local * np.cos(self.agent.orientation) + position[1]
             global_vertices.append((x_global, y_global))
 
         for vertex in global_vertices:
@@ -237,83 +237,114 @@ class ContinuousMazeEnv(gym.Env):
         return (left + right) / 2
 
     def step(self, action):
-        # print(f"Received action: {action}, shape: {np.shape(action)}")
+        # Select only one action to be active
+        # max_action_index = np.argmax(np.abs(action))
+        # new_action = np.zeros_like(action)
+        # new_action[max_action_index] = action[max_action_index]
+        # action = new_action
+
+        #print(f"Received action: {action}")
         self.timesteps += 1
-        # Store the old position in case we need to revert
-        old_position = np.array(self.agent.position)
+        # print(f"Timestep: {self.timesteps}")
 
-        forward_velocity = action[0] * 30
-        side_velocity = action[1] * 30
-        # angular_velocity = action[2] * 30
+        '''
+        # # Store the old position in case we need to revert
+        # old_position = np.array(self.agent.position)
+
+        # side_velocity = action[0] * 100
+        # forward_velocity = action[1] * 100
         
-        # Apply the action to the agent
-        self.agent.linearVelocity = ((forward_velocity * np.cos(self.agent_orientation) - side_velocity * np.sin(self.agent_orientation)), #x
-                                     (forward_velocity * np.sin(self.agent_orientation) + side_velocity * np.cos(self.agent_orientation))) #y
-        self.agent.angularVelocity = action[2] * 30  # Apply the rotation action     
-        self.agent.torque = self.agent.angularVelocity * self.agent.moment_of_inertia
-        # print(f"orientation is {self.agent_orientation}") 
+        # # Apply the action to the agent
+        # self.agent.linearVelocity = ((side_velocity * np.cos(self.agent.orientation) - forward_velocity * np.sin(self.agent.orientation)), #x
+        #                              (side_velocity * np.sin(self.agent.orientation) + forward_velocity * np.cos(self.agent.orientation))) #y
+        # self.agent.linearVelocity_np = np.array([self.agent.linearVelocity.x, self.agent.linearVelocity.y])
+        # self.agent.angularVelocity = action[2] * 100  # Apply the rotation action     s
+        # self.agent.torque = self.agent.angularVelocity * self.agent.moment_of_inertia
+        # self.agent.force = self.agent.linearVelocity * self.agent.moment_of_inertia
+        # # print(f"orientation is {self.agent.orientation}") 
+        # print(f"Linear Velocity: {self.agent.linearVelocity_np}")
+        # print(f"Angular Velocity: {self.agent.angularVelocity}")
+        # print(f"Force: {self.agent.force}")
+        # print(f"Torque: {self.agent.torque}")
+        # # Incremental rotation checking
+        # rotation_steps = 10
+        # incremental_rotation = self.agent.angularVelocity * (0.2 / 60) / rotation_steps
+        # collision_detected = False
+        # for _ in range(rotation_steps):
+        #     self.agent.orientation += incremental_rotation
+        #     if self.is_agent_collision(self.agent.position):
+        #         self.agent.orientation -= incremental_rotation
+        #         self.agent.angularVelocity = 0
+        #         collision_detected=True
+        #         break
 
-        # Incremental rotation checking
-        rotation_steps = 10
-        incremental_rotation = self.agent.angularVelocity * (0.2 / 60) / rotation_steps
+        ##Step the Box2D world
+        # self.world.Step(1.0 / 60, 6, 2)
+
+        # # Get the new state
+        # new_position = np.array(self.agent.position) # make sure pos is np.array 
+
+        # self.agent.ApplyTorque(self.agent.torque, wake=True)
+        # self.agent.ApplyForceToCenter(self.agent.force, wake=True)
+'''
+        # print(f"Received action: {action}")
+
+        # Store the old position for potential collision checks
+        old_position = np.array(self.agent.position)
+        old_orientation = self.agent.orientation
+        
+        # Directly update the position based on the action
+        side_velocity = action[0] * 15  # Adjust scaling factor as needed
+        forward_velocity = action[1] * 15  # Adjust scaling factor as needed
+        
+        # Calculate the new position
+        dx = side_velocity * np.cos(self.agent.orientation) - forward_velocity * np.sin(self.agent.orientation)
+        dy = side_velocity * np.sin(self.agent.orientation) + forward_velocity * np.cos(self.agent.orientation)
+        
+        new_position = old_position + np.array([dx, dy])
+        
+        # Update the orientation
+        dtheta = action[2] * 1  # Adjust scaling factor as needed
+        new_orientation = old_orientation + dtheta
+
+        # # Check for collisions with walls
+        # if not self.is_agent_collision(new_position):
+        #     self.agent.position = new_position
+        #     self.agent.orientation = new_orientation
+        #     collision_detected = False
+        # else: # If collision, revert to old position/orientation
+        #     self.agent.position = old_position
+        #     self.agent.orientation = old_orientation
+        #     collision_detected = True
+        #     # print("collision detected")
+
+        collision_steps = 10
+        incremental_translation = np.array([dx, dy]) / collision_steps       
+        incremental_rotation = dtheta / collision_steps
         collision_detected = False
-        for _ in range(rotation_steps):
-            self.agent_orientation += incremental_rotation
+        for _ in range(collision_steps):
+            self.agent.position += incremental_translation
+            self.agent.orientation += incremental_rotation
             if self.is_agent_collision(self.agent.position):
-                self.agent_orientation -= incremental_rotation
-                self.agent.angularVelocity = 0
+                self.agent.position -= incremental_translation
+                self.agent.orientation -= incremental_rotation
                 collision_detected=True
                 break
 
-        # Update agent orientation
-        # self.agent_orientation += self.agent.angularVelocity * (1.0 / 60)
-
-        # Step the Box2D world
-        self.world.Step(10.0 / 60, 6, 2)
-
-        # Get the new state
-        new_position = np.array(self.agent.position) # make sure pos is np.array 
-
-        # Check for collisions with walls
-        if not self.is_agent_collision(new_position):
-            self.agent_position = new_position
-        else:
-            # If collision, revert to old position
-            self.agent.position = old_position
-            self.agent.linearVelocity = (0, 0)
-            collision_detected = True
-            # print("collision detected")
-
-        self.agent.ApplyTorque(self.agent.torque, wake=True)
 
         # Perform ray casting
-        # start_time = time.time()
         num_rays = 9
-        angles = np.linspace(0 + self.agent_orientation, np.pi + self.agent_orientation, num_rays, endpoint=True)
-        # lidar_readings = []
-        # for angle in angles:
-        #     lidar_reading = self.cast_ray(angle)
-        #     lidar_reading = round(lidar_reading,1)
-        #     lidar_readings.append(lidar_reading)
+        angles = np.linspace(0 + self.agent.orientation, np.pi + self.agent.orientation, num_rays, endpoint=True)
         self.lidar_readings = [self.cast_ray(angle) for angle in angles]
-        # end_time = time.time()
-        # print(f"Optimized lidar calculation time: {end_time - start_time} seconds")
         #print(f"LiDAR readings: {self.lidar_readings}")
-        '''
-        # Create a text surface
-        text = self.font.render(f"LiDAR readings: {lidar_readings}", True, (255, 255, 255))
-        # Draw the text at the bottom of the screen
-        self.screen.blit(text, (10, self.screen.get_height() - text.get_height() - 10))
-        # Update the display
-        pygame.display.flip()
-        '''
+ 
         state = np.array([self.agent.position[0], self.agent.position[1], 
-                          self.agent.linearVelocity[0], self.agent.linearVelocity[1], 
-                          self.agent_orientation,
+                          dx, dy, 
+                          self.agent.orientation,
                           self.goal_position[0], self.goal_position[1]] 
                           + self.lidar_readings, 
                           dtype=np.float32)
-
+        
         # Round the state to one decimal place
         state = np.round(state, 1)
       
@@ -337,15 +368,17 @@ class ContinuousMazeEnv(gym.Env):
             terminated = False
 
         # Time penalty
-        reward_time_penalty = -0.001
+        reward_time_penalty = -0.01
 
         # Reward for moving closer to the goal
-        reward_proximity = (old_distance_to_goal -distance_to_goal)
+        reward_proximity = (old_distance_to_goal -distance_to_goal) * 0.01
+        if reward_proximity < 0:
+            reward_proximity = 0.0 # Use only positive rewards
         #print(f"Reward Proximity: {reward_proximity}, Distance to Goal: {distance_to_goal}")
 
         # Penalty for collisions
         if collision_detected:
-            reward_collision_penalty = -0.1
+            reward_collision_penalty = -0.001
         #print(f"Collision Penalty: {reward_collision_penalty}")
 
         # Visit count penalty
@@ -360,7 +393,7 @@ class ContinuousMazeEnv(gym.Env):
         lidar_threshold = 20.0  # Define a threshold for considering a distance as "too close"
         for distance in self.lidar_readings:
             if distance < lidar_threshold:
-                current_lidar_reward = (lidar_threshold - (self.half_height + self.half_width) / 2 - distance) * 0.05
+                current_lidar_reward = (lidar_threshold - (self.half_height + self.half_width) / 2 - distance) * 0.0
         reward_lidar = current_lidar_reward - self.previous_lidar_reward
         self.previous_lidar_reward = current_lidar_reward  # Update for the next step
         #print(f"LiDAR Reward Difference: {reward_lidar}")
@@ -369,8 +402,6 @@ class ContinuousMazeEnv(gym.Env):
         if action[1] > 0:
             reward_forward = 0.0 # Small reward to encourage the agent to move forward
         #print(f"Reward forward: {reward_forward}")
-
-        
 
         total_reward = reward_goal + reward_time_penalty + reward_proximity + reward_collision_penalty + reward_visit + reward_lidar + reward_forward
 
@@ -393,7 +424,7 @@ class ContinuousMazeEnv(gym.Env):
         self.agent.initial_position = (50,50)
         self.agent.linearVelocity = (0, 0)
         self.agent.angularVelocity = 0  # Reset angular velocity
-        self.agent_orientation = 0.0  # Reset orientation
+        self.agent.orientation = 0.0  # Reset orientation
         # print(f"Agent reset to position: {self.agent.position}")
         # Reset goal position
         self.goal_position = self.generate_goal(seed)
@@ -403,7 +434,7 @@ class ContinuousMazeEnv(gym.Env):
         self.visit_count = {}  # Reset visit count
         
         num_rays = 9
-        angles = np.linspace(0, np.pi + self.agent_orientation, num_rays, endpoint=True)
+        angles = np.linspace(0, np.pi + self.agent.orientation, num_rays, endpoint=True)
         # lidar_readings = []
         # for angle in angles:
         #     distance = self.cast_ray(angle)
@@ -413,7 +444,7 @@ class ContinuousMazeEnv(gym.Env):
 
         initial_state = np.array([self.agent.initial_position[0], self.agent.initial_position[1], 
                                   self.agent.linearVelocity[0], self.agent.linearVelocity[1], 
-                                  self.agent_orientation,
+                                  self.agent.orientation,
                                   self.goal_position[0], self.goal_position[1]] 
                                   + self.lidar_readings, 
                                   dtype=np.float32)
@@ -462,8 +493,8 @@ class ContinuousMazeEnv(gym.Env):
         global_vertices = []
         for vertex in self.agent_vertices:
             x_local, y_local = vertex
-            x_global = x_local * np.cos(self.agent_orientation) - y_local * np.sin(self.agent_orientation) + position[0]
-            y_global = x_local * np.sin(self.agent_orientation) + y_local * np.cos(self.agent_orientation) + position[1]
+            x_global = x_local * np.cos(self.agent.orientation) - y_local * np.sin(self.agent.orientation) + position[0]
+            y_global = x_local * np.sin(self.agent.orientation) + y_local * np.cos(self.agent.orientation) + position[1]
             global_vertices.append((x_global, y_global))
 
         # Check if the agent position is within the screen bounds
@@ -478,7 +509,7 @@ class ContinuousMazeEnv(gym.Env):
 
         # Render LiDAR rays
         # num_rays = 9
-        # angles = np.linspace(0 + self.agent_orientation, np.pi + self.agent_orientation, num_rays, endpoint=True)
+        # angles = np.linspace(0 + self.agent.orientation, np.pi + self.agent.orientation, num_rays, endpoint=True)
         # for angle in angles:
         #     start_point = self.scale * np.array(self.agent.position)
         #     max_distance = self.cast_ray(angle)
@@ -487,7 +518,7 @@ class ContinuousMazeEnv(gym.Env):
 
         # Render LiDAR rays
         num_rays = 9
-        angles = np.linspace(0 + self.agent_orientation, np.pi + self.agent_orientation, num_rays, endpoint=True)
+        angles = np.linspace(0 + self.agent.orientation, np.pi + self.agent.orientation, num_rays, endpoint=True)
         for angle, distance in zip(angles, self.lidar_readings):
             start_point = self.scale * np.array(self.agent.position)
             end_point = start_point + self.scale * distance * np.array([np.cos(angle), np.sin(angle)])
