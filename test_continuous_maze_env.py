@@ -42,17 +42,44 @@ except gym.error.Error as e:
     print(f"Failed to create or reset environment: {e}")
 
 done = False
+
+# Use this loop for continuous movement 
+# while not done:
+#     for event in pygame.event.get():
+#         if event.type == pygame.QUIT:
+#             done = True
+#             break
+
+#     keys = pygame.key.get_pressed()
+#     action = get_action(keys)
+#     observation, reward, terminated, truncated, info = wrapped_env.step(action)
+#     wrapped_env.render()
+
+# Use this loop to pause at each time step (useful for simulating what how the agent moves when training)
 while not done:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             done = True
             break
 
-    keys = pygame.key.get_pressed()
-    action = get_action(keys)
+    action_taken = False
+    while not action_taken:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                done = True
+                break
+            elif event.type == pygame.KEYDOWN:
+                keys = pygame.key.get_pressed()
+                action = get_action(keys)
+                if any(action):  # Check if any action is taken
+                    action_taken = True
+                    break
+
+    if done:
+        break
+
     observation, reward, terminated, truncated, info = wrapped_env.step(action)
     wrapped_env.render()
-    time.sleep(0.01)  # Small delay to control the frame rate
 
 env.close()
 wrapped_env.close()
