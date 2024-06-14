@@ -2,14 +2,14 @@
 ppo:
   policy: 'MlpPolicy'  # The policy model to use (e.g., 'MlpPolicy').
   n_steps: 128  # Number of steps to run for each environment per update. Higher steps allow the model to gather more data before each update, which can provide more stable updates but might be slower in terms of learning speed.
-  learning_rate: 0.0001  # The learning rate. Typical values might be 0.001 - 0.0001
+  learning_rate: 0.0003  # The learning rate. Typical values might be 0.001 - 0.0001
   batch_size: 64  # Minibatch size. Ensure the batch size divides evenly into n_steps. A common choice is 64, but if you have a smaller n_steps, you might want to adjust this to 32 or 16.
   n_epochs: 10  # Number of epochs when optimizing the surrogate loss. More epochs can help with better optimization but will increase computation time. For simple envs, use 1-10, for complex envs, use 30-50
-  gamma: 0.95  # Discount factor. Typically set to 0.99, but if your rewards are sparse, consider slightly lower values like 0.95. Increase gamma to make the agent consider future rewards more.
+  gamma: 0.99  # Discount factor. Typically set to 0.99, but if your rewards are sparse, consider slightly lower values like 0.95. Increase gamma to make the agent consider future rewards more.
   gae_lambda: 0.95  # Factor for trade-off of bias vs variance for Generalized Advantage Estimator.
   clip_range: 0.1  # Clipping parameter for the surrogate loss. Typically set to 0.2. If learning is unstable, consider lowering it.
   # optional params
-  ent_coef: 0.1  # Entropy coefficient for the loss calculation. A higher entropy coefficient (e.g., >0.1) encourages exploration.
+  ent_coef: 0.2  # Entropy coefficient for the loss calculation. A higher entropy coefficient (e.g., >0.1) encourages exploration.
   vf_coef: 0.5  # Value function coefficient for the loss calculation. Typically set to 0.5. This controls the trade-off between the value function loss and the policy loss.
   max_grad_norm: 0.5  # The maximum value for the gradient clipping.
   use_sde: true  # Whether to use State Dependent Exploration (SDE).
@@ -21,6 +21,6 @@ ppo:
         - vf: [256, 256, 256, 256]
   # Additional arguments to be passed to the policy on creation.
   tensorboard_log: "./ppo_tensorboard/"  # Directory for logging TensorBoard data.
-  seed: 123  # Seed for the random number generators.
+  seed: None  # Seed for the random number generators.
   device: "cuda"  # Device to use for computation ('auto', 'cpu', 'cuda', ...). Setting it to 'cpu' ensures the use of the CPU.
   _init_setup_model: True  # Whether to build the network at the creation of the model.
