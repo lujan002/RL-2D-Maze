@@ -20,6 +20,29 @@ def generate_maze(width, height):
 
     return newMaze.get_grid()
 
+# Create an empty grid with only the border walls
+def generate_empty_maze(width, height):
+	newMaze = Maze(width, height)
+	maze_grid = newMaze.get_grid()
+
+	# Clear internal walls and set border walls
+	for row in maze_grid:
+		for tile in row:
+			# Clear all connections first
+			tile.connectTo = []
+
+			# Set border walls
+			if tile.coordinateX == 0:
+				tile.connectTo.append("W")
+			if tile.coordinateX == width - 1:
+				tile.connectTo.append("E")
+			if tile.coordinateY == 0:
+				tile.connectTo.append("N")
+			if tile.coordinateY == height - 1:
+				tile.connectTo.append("S")
+
+	return maze_grid
+
 class RayCastClosestCallback(Box2D.b2RayCastCallback):
     def __init__(self):
         # Box2D.b2RayCastCallback.__init__(self)
@@ -48,7 +71,8 @@ class ContinuousMazeEnv(gym.Env):
         self.action_space = spaces.Box(low=-1, high=1, shape=(3,), dtype=np.float32)
 
         # Continuous observation space: [position_x, position_y, velocity_x, velocity_y, orientation, goal_x, goal_y, lidar_array]
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(2 + 2 + 1 + 2 + 9,), dtype=np.float32)
+        # Continuous observation space: [position_relative_x, position_relative_y, orientation, lidar_array]
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(2 + 1 + 9,), dtype=np.float32)
 
         # Pygame initialization
         self.cell_size = 40  # Each cell is _x_ pixels
@@ -81,18 +105,20 @@ class ContinuousMazeEnv(gym.Env):
         self.agent.mass = 1
         self.agent.moment_of_inertia = self.agent.mass * (self.agent.fixtures[0].shape.radius ** 2) / 2
 
-        self.maze_grid = generate_maze(self.grid_width, self.grid_height)
+        self.maze_grid = generate_empty_maze(self.grid_width, self.grid_height)
 
         self.screen = None
         self.clock = None
         self.viewer = None
         self.font = None
+        self.agent.initial_position = (50,50)
         self.agent.orientation = 0.0
-        self.timesteps = 0.0
         self.goal_position = self.generate_goal(self.seed)
+        self.timesteps = 0.0
+        self.max_lidar_dist = 100
         self.previous_lidar_reward = 0.0
+        self.relative_position = (0.0, 0.0) # Initialization
         self.visit_count = {}
-
         self.reset()
 
     def generate_goal(self, seed):
@@ -216,7 +242,7 @@ class ContinuousMazeEnv(gym.Env):
         direction = vec2(np.cos(angle), np.sin(angle))
 
         # Binary search parameters
-        left, right = 0, 100.0  # Max distance of 100 units
+        left, right = 0, self.max_lidar_dist # Max distance of 100 units
         precision = 0.1
 
         while right - left > precision:
@@ -236,6 +262,33 @@ class ContinuousMazeEnv(gym.Env):
 
         return (left + right) / 2
 
+    def calc_gaussian_position(self, agent_pos, goal_pos):
+        # Calculate the Gaussian-like relative position of the agent with respect to the goal
+        diff = goal_pos - agent_pos
+        lambda_val = 0.001
+        return np.exp(-lambda_val * diff**2)
+        
+    def calculate_gaussian_orientation(self, agent_orientation, agent_position, goal_position):
+        #Calculate the Gaussian-like relative orientation of the agent with respect to the goal.
+
+        dx = goal_position[0] - agent_position[0]
+        dy = goal_position[1] - agent_position[1]
+        
+        # Calculate the desired angle to face the goal
+        desired_orientation = np.arctan2(dy, dx)
+        
+        # Calculate the difference in orientation
+        orientation_diff = desired_orientation - agent_orientation
+        
+        # Normalize the orientation difference to the range [0, 2*pi)
+        orientation_diff = (orientation_diff + 2 * np.pi) % (2 * np.pi) - np.pi/2
+        
+        # Apply the Gaussian-like function
+        lambda_value = 4 * np.log(2) / np.pi**2
+        relative_orientation = np.exp(-lambda_value * orientation_diff**2)
+        
+        return relative_orientation
+    
     def step(self, action):
         # Select only one action to be active
         # max_action_index = np.argmax(np.abs(action))
@@ -243,7 +296,7 @@ class ContinuousMazeEnv(gym.Env):
         # new_action[max_action_index] = action[max_action_index]
         # action = new_action
 
-        #print(f"Received action: {action}")
+        # print(f"Received action: {action}")
         self.timesteps += 1
         # print(f"Timestep: {self.timesteps}")
 
@@ -305,18 +358,6 @@ class ContinuousMazeEnv(gym.Env):
         
         # Update the orientation
         dtheta = action[2] * 1  # Adjust scaling factor as needed
-        new_orientation = old_orientation + dtheta
-
-        # # Check for collisions with walls
-        # if not self.is_agent_collision(new_position):
-        #     self.agent.position = new_position
-        #     self.agent.orientation = new_orientation
-        #     collision_detected = False
-        # else: # If collision, revert to old position/orientation
-        #     self.agent.position = old_position
-        #     self.agent.orientation = old_orientation
-        #     collision_detected = True
-        #     # print("collision detected")
 
         collision_steps = 10
         incremental_translation = np.array([dx, dy]) / collision_steps       
@@ -325,34 +366,58 @@ class ContinuousMazeEnv(gym.Env):
         for _ in range(collision_steps):
             self.agent.position += incremental_translation
             self.agent.orientation += incremental_rotation
+
             if self.is_agent_collision(self.agent.position):
                 self.agent.position -= incremental_translation
                 self.agent.orientation -= incremental_rotation
                 collision_detected=True
                 break
+        
+        old_relative_position = self.relative_position
+        # # Calculate the relative position to the goal using Gaussian function
+        relative_x = self.calc_gaussian_position(self.agent.position[0], self.goal_position[0])
+        relative_y = self.calc_gaussian_position(self.agent.position[1], self.goal_position[1])
+        self.relative_position = (relative_x, relative_y)
 
+        # # Calculate the relative orientation to the goal using Gaussian function
+        # # Normalize the orientation to be within the range [0, 2*pi)
+        # self.agent.orientation = self.agent.orientation % (2 * np.pi)
+        # if self.agent.orientation < 0:
+        #     self.agent.orientation += 2 * np.pi
+
+        # # Calculate the angle to the goal
+        # goal_direction = np.arctan2(self.goal_position[1] - self.agent.position[1], self.goal_position[0] - self.agent.position[0])
+        # relative_orientation = (self.agent.orientation - goal_direction) % (2 * np.pi)
+		# # Normalize orientation to [0, 1]
+        # relative_orientation = relative_orientation / (2 * np.pi)
+
+        relative_orientation = self.calculate_gaussian_orientation(self.agent.orientation, self.agent.position, self.goal_position)
 
         # Perform ray casting
         num_rays = 9
         angles = np.linspace(0 + self.agent.orientation, np.pi + self.agent.orientation, num_rays, endpoint=True)
-        self.lidar_readings = [self.cast_ray(angle) for angle in angles]
+
+        self.lidar_readings = [self.cast_ray(angle) / self.max_lidar_dist for angle in angles]
         #print(f"LiDAR readings: {self.lidar_readings}")
  
-        state = np.array([self.agent.position[0], self.agent.position[1], 
-                          dx, dy, 
-                          self.agent.orientation,
-                          self.goal_position[0], self.goal_position[1]] 
-                          + self.lidar_readings, 
+        state = np.array([self.relative_position[0], self.relative_position[1], 
+                          relative_orientation] + 
+                          self.lidar_readings, 
                           dtype=np.float32)
         
-        # Round the state to one decimal place
-        state = np.round(state, 1)
-      
-        # Reward calculation
-        max_distance_to_goal = np.linalg.norm(np.array(self.agent.initial_position) - np.array(self.goal_position))
+        # Round the state to n decimal place
+        state = np.round(state, 3)
+
+
+
+        ###/// Reward calculation ///###
+
+
+        # max_distance_to_goal = np.linalg.norm(np.array(self.agent.initial_position) - np.array(self.goal_position))
         distance_to_goal = np.linalg.norm(np.array(self.agent.position) - np.array(self.goal_position))
-        normalized_distance_to_goal = 1 - distance_to_goal/max_distance_to_goal # value between 0-1
-        old_distance_to_goal = np.linalg.norm(np.array(old_position) - np.array(self.goal_position))
+        # normalized_distance_to_goal = 1 - distance_to_goal/max_distance_to_goal # value between 0-1
+        # old_distance_to_goal = np.linalg.norm(np.array(old_position) - np.array(self.goal_position))
+
         # Initialize reward variables 
         reward_goal = 0.0
         reward_collision_penalty = 0.0
@@ -360,8 +425,8 @@ class ContinuousMazeEnv(gym.Env):
         reward_forward = 0.0
 
         # Large reward for reaching the goal
-        if distance_to_goal < 10:  # Assuming a small radius around the goal
-            reward_goal = 1000
+        if distance_to_goal < 15:  # Assuming a small radius around the goal
+            reward_goal = 10
             terminated = True
             print(f"Reached the goal in {self.timesteps} timesteps!")
         else:
@@ -370,15 +435,14 @@ class ContinuousMazeEnv(gym.Env):
         # Time penalty
         reward_time_penalty = -0.01
 
-        # Reward for moving closer to the goal
-        reward_proximity = (old_distance_to_goal -distance_to_goal) * 0.01
-        if reward_proximity < 0:
-            reward_proximity = 0.0 # Use only positive rewards
+        # reward_proximity = np.sqrt(self.relative_position[0]**2-old_relative_position[0]**2 + 
+        #                     self.relative_position[1]**2-old_relative_position[1]**2) # Use the squared distance for the reward, less costly than sqrt
+        reward_proximity = 0.0
         #print(f"Reward Proximity: {reward_proximity}, Distance to Goal: {distance_to_goal}")
 
         # Penalty for collisions
         if collision_detected:
-            reward_collision_penalty = -0.001
+            reward_collision_penalty = -0.0
         #print(f"Collision Penalty: {reward_collision_penalty}")
 
         # Visit count penalty
@@ -407,8 +471,9 @@ class ContinuousMazeEnv(gym.Env):
 
         truncated = False  # Define your truncation condition (for max steps, etc.)
 
-        # Log reward components
-        #self.log_reward_components(reward_goal, reward_time_penalty, reward_proximity, reward_collision_penalty, reward_visit, reward_lidar, reward_forward)
+        # DEBUG
+        print(state)
+        self.log_reward_components(reward_goal, reward_time_penalty, reward_proximity, reward_collision_penalty, reward_visit, reward_lidar, reward_forward)
 
         return state, total_reward, terminated, truncated, {}
     
@@ -439,15 +504,16 @@ class ContinuousMazeEnv(gym.Env):
         # for angle in angles:
         #     distance = self.cast_ray(angle)
         #     lidar_readings.append(distance)
-        self.lidar_readings = [self.cast_ray(angle) for angle in angles]
 
+        self.lidar_readings = [self.cast_ray(angle) / self.max_lidar_dist for angle in angles]
 
-        initial_state = np.array([self.agent.initial_position[0], self.agent.initial_position[1], 
-                                  self.agent.linearVelocity[0], self.agent.linearVelocity[1], 
-                                  self.agent.orientation,
-                                  self.goal_position[0], self.goal_position[1]] 
-                                  + self.lidar_readings, 
-                                  dtype=np.float32)
+        # Calculate the relative position (relative distance of agent to goal from start, normalized)
+        self.position_relative = (((self.agent.position[0] - self.agent.initial_position[0]) / (self.goal_position[0] - self.agent.initial_position[0])), ((self.agent.position[1] - self.agent.initial_position[1]) / (self.goal_position[1] - self.agent.initial_position[1])))
+
+        initial_state = np.array([self.position_relative[0], self.position_relative[1], 
+                          self.agent.orientation] +
+                          self.lidar_readings, 
+                          dtype=np.float32)
         
         # Round the initial state to one decimal place
         initial_state = np.round(initial_state, 1)
@@ -505,7 +571,7 @@ class ContinuousMazeEnv(gym.Env):
             print(f"Agent position {position} is out of bounds")
 
         # Render goal 
-        pygame.draw.circle(self.screen, (0,255,0), self.goal_position, radius = 10)
+        pygame.draw.circle(self.screen, (0,255,0), self.goal_position, radius = 15)
 
         # Render LiDAR rays
         # num_rays = 9
@@ -521,7 +587,7 @@ class ContinuousMazeEnv(gym.Env):
         angles = np.linspace(0 + self.agent.orientation, np.pi + self.agent.orientation, num_rays, endpoint=True)
         for angle, distance in zip(angles, self.lidar_readings):
             start_point = self.scale * np.array(self.agent.position)
-            end_point = start_point + self.scale * distance * np.array([np.cos(angle), np.sin(angle)])
+            end_point = start_point + self.scale * distance * self.max_lidar_dist * np.array([np.cos(angle), np.sin(angle)])
             pygame.draw.line(self.screen, (0, 0, 255), start_point, end_point, 1)  # Blue lines for LiDAR rays
 
         pygame.display.flip()
