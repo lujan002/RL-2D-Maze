@@ -4,3 +4,4 @@ __pycache__
 maze_agent.mp4
 proximity_reward_demo.png
 ppo_tensorboard
+ppo_maze2.zip
