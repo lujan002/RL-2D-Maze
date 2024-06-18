@@ -2,10 +2,16 @@ import gymnasium as gym
 import continuous_maze_env  # Ensure this imports your environment file
 import pygame
 import time 
+import matplotlib.pyplot as plt
 from Maze import Maze
 from gymnasium.wrappers import FlattenObservation
 import sys
 sys.path.append('Users\20Jan\TU Graz Code\2D_maze_project')
+
+# Initialize lists to store rewards and timesteps
+all_rewards = []
+episode_rewards = []
+cumulative_reward = 0
 
 # Define the control keys
 KEY_MAPPING = {
@@ -43,12 +49,12 @@ except gym.error.Error as e:
 
 done = False
 
-# Use this loop for continuous movement 
+# # qUse this loop for continuous movement 
 # while not done:
 #     for event in pygame.event.get():
 #         if event.type == pygame.QUIT:
 #             done = True
-#             break
+#             breakq
 
 #     keys = pygame.key.get_pressed()
 #     action = get_action(keys)
@@ -79,8 +85,28 @@ while not done:
         break
 
     observation, reward, terminated, truncated, info = wrapped_env.step(action)
+    if episode_rewards:
+        episode_rewards.append(episode_rewards[-1] + reward)  # Cumulative reward
+    else:
+        episode_rewards.append(reward)  # Initial reward
+
+    if terminated:
+        all_rewards.append(episode_rewards)
+        episode_rewards = []
+        observation, info = wrapped_env.reset()
+
     wrapped_env.render()
 
 env.close()
 wrapped_env.close()
 pygame.quit()
+
+# Plot the cumulative rewards vs. timesteps for each episode
+plt.figure()
+for episode_index, episode_rewards in enumerate(all_rewards):
+    plt.plot(episode_rewards, label=f'Episode {episode_index + 1}')
+plt.xlabel('Timesteps')
+plt.ylabel('Cumulative Reward')
+plt.title('Cumulative Reward vs. Timesteps per Episode')
+plt.legend()
+plt.show()
