@@ -23,32 +23,32 @@ print(f"Evaluation time: {time.time() - start_time} seconds")
 print(f"Mean reward: {mean_reward}, Std reward: {std_reward}")
 
 # Close the evaluation environment and create a new one with rendering for video recording
-# vec_env.close()
-# vec_env_norm.close()
+vec_env.close()
+env = gym.make('ContinuousMazeEnv-v1', render_mode='rgb_array')
 
 # Reset the environment and start recording the video
 start_time = time.time()
-obs = vec_env.reset()
+obs, _ = env.reset()
 images = []
 video_length = 5000
 
 for _ in range(video_length):
-    # if np.random.rand() < 0.1:
-    #     action = np.array([vec_env_norm.action_space.sample()])qq
-    # else:
-    #     action, _ = model.predict(obs, state=None, deterministic=False)
-    action, _ = model.predict(obs, state=None, deterministic=False)
-    print(f"Action: {action}")
-    obs, reward, done, info = vec_env.step(action)
-    print(f"Obs: {obs}, Reward: {reward}, Done: {done}")
+    if np.random.rand() < 0.1:
+        action = env.action_space.sample()
+    else:
+        action, _ = model.predict(obs, state=None, deterministic=False)
+    #action, _ = model.predict(obs, state=None, deterministic=False)
+    #print(f"Action: {action}")
+    obs, reward, done, _, _ = env.step(action)
+    #print(f"Obs: {obs}, Reward: {reward}, Done: {done}")
 
-    img = vec_env.envs[0].render()
+    img = env.render()
     if img is not None and len(img.shape) == 3:  # Ensure img has correct dimensions
         images.append(img)
     else:
         print("Warning: Rendered image has unexpected shape")
     if done:
-        obs = vec_env.reset()
+        obs, _ = env.reset()
 
 print(f"Video recording time: {time.time() - start_time} seconds")
 
@@ -61,4 +61,4 @@ else:
     print("Error: No images to save")
 
 # Close the environment
-vec_env.close()
+env.close()
