@@ -84,19 +84,19 @@ print(f"Model device: {model.device}")
 reward_logging_callback = RewardLoggingCallback(check_freq=10000)
 
 # Train the model
-model.learn(total_timesteps=100000, callback=reward_logging_callback)  # Adjust the number of timesteps as needed
+model.learn(total_timesteps=200000, callback=reward_logging_callback)  # Adjust the number of timesteps as needed
 
 import sys
 np.set_printoptions(threshold=sys.maxsize)
 
 # Verify actions from model during training
-obs = vec_env.reset()
-for _ in range(10):
-	action, _ = model.predict(obs)
-	print(f"Predicted Action during evaluation: {action}")
-	obs, reward, done, info = vec_env.step(action)
-	# Reset only those environments that are done
-	obs = np.array([vec_env.reset()[i] if done[i] else obs[i] for i in range(len(done))])
+# obs = vec_env.reset()
+# for _ in range(10):
+# 	action, _ = model.predict(obs)
+# 	print(f"Predicted Action during evaluation: {action}")
+# 	obs, reward, done, info = vec_env.step(action)
+# 	# Reset only those environments that are done
+# 	obs = np.array([vec_env.reset()[i] if done[i] else obs[i] for i in range(len(done))])
           
 #do this only for the first vec env
 # original_obs = vec_env_norm.get_original_obs()[0:4]
