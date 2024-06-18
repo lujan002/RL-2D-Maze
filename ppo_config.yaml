@@ -7,7 +7,7 @@ ppo:
   n_epochs: 10  # Number of epochs when optimizing the surrogate loss. More epochs can help with better optimization but will increase computation time. For simple envs, use 1-10, for complex envs, use 30-50
   gamma: 0.99  # Discount factor. Typically set to 0.99, but if your rewards are sparse, consider slightly lower values like 0.95. Increase gamma to make the agent consider future rewards more.
   gae_lambda: 0.95  # Factor for trade-off of bias vs variance for Generalized Advantage Estimator.
-  clip_range: 0.1  # Clipping parameter for the surrogate loss. Typically set to 0.2. If learning is unstable, consider lowering it.
+  clip_range: 0.2  # Clipping parameter for the surrogate loss. Typically set to 0.2. If learning is unstable, consider lowering it.
   # optional params
   ent_coef: 0.05  # Entropy coefficient for the loss calculation. A higher entropy coefficient (e.g., >0.1) encourages exploration.
   vf_coef: 0.5  # Value function coefficient for the loss calculation. Typically set to 0.5. This controls the trade-off between the value function loss and the policy loss.
