@@ -11,40 +11,41 @@ import continuous_maze_env
 
 # Define the custom callback
 class RewardLoggingCallback(BaseCallback):
-    def __init__(self, check_freq, verbose=1):
+    def __init__(self, check_freq, var_threshold, min_steps, verbose=1):
         super(RewardLoggingCallback, self).__init__(verbose)
         self.check_freq = check_freq
+        self.var_threshold = var_threshold
+        self.min_steps = min_steps
         self.start_time = None
-        self.actions = []  # Initialize the actions attribute
+        self.rewards_buffer = []
 
     def _on_training_start(self):
         self.start_time = time.time()
 
     def _on_step(self) -> bool:
         current_time = time.time()
-        if self.n_calls % self.check_freq == 0:
-            # Retrieve the reward from the model's buffer
-            mean_reward = np.mean(self.model.rollout_buffer.rewards)
+
+        # Append rewards to buffer
+        self.rewards_buffer.append(np.mean(self.model.rollout_buffer.rewards))
+
+        # Check variance every check_freq steps
+        if self.n_calls % self.check_freq == 0 and len(self.rewards_buffer) > self.min_steps:
+            # Calculate reward variance
+            reward_variance = np.var(self.rewards_buffer[-self.min_steps:])
+            
             elapsed_time = current_time - self.start_time
-            print(f"Step {self.num_timesteps}: Mean Reward: {mean_reward}, Time Elapsed: {elapsed_time:.2f} seconds")
-            elapsed_time = current_time - self.start_time
+            print(f"Step {self.num_timesteps}: Reward Variance: {reward_variance}, Time Elapsed: {elapsed_time:.2f} seconds")
 
-            # Log actions from the model's buffer
-            actions = self.model.rollout_buffer.actions
-            print(f"Sample actions from buffer: {actions}")
+            # # Truncate episodes with low variance
+            # if reward_variance < self.var_threshold:
+            #     print(f"Terminating due to low reward variance: {reward_variance}")
+            #     return False  # Terminate training early
 
-		# Print actions during training
-        for env_idx in range(self.training_env.num_envs):
-            obs = self.training_env.envs[env_idx].observation_space.sample()  # Get a sample observation
-            action, _ = self.model.predict(obs, deterministic=False)
-            # print(f"Predicted Action during training for env {env_idx}: {action}")
-
-                   
         return True
 
 env_id = 'ContinuousMazeEnv-v1'
 env = gym.make('ContinuousMazeEnv-v1', render_mode=None)
-vec_env = make_vec_env(env_id, n_envs=64)
+vec_env = make_vec_env(env_id, n_envs=128)
 #vec_env_norm = VecNormalize(vec_env, norm_obs=False, norm_reward=False, clip_obs=10.)
 
 # Load the YAML configuration file
@@ -81,10 +82,10 @@ model = PPO(**ppo_params, env=vec_env, verbose=1)
 print(f"Model device: {model.device}")
 
 # Define the callback with a frequency of x steps
-reward_logging_callback = RewardLoggingCallback(check_freq=10000)
+reward_logging_callback = RewardLoggingCallback(check_freq=20000/64, var_threshold=0.1, min_steps=100)
 
 # Train the model
-model.learn(total_timesteps=200000, callback=reward_logging_callback)  # Adjust the number of timesteps as needed
+model.learn(total_timesteps=600000, callback=reward_logging_callback)  # Adjust the number of timesteps as needed
 
 import sys
 np.set_printoptions(threshold=sys.maxsize)
@@ -111,7 +112,7 @@ np.set_printoptions(threshold=sys.maxsize)
 
 # Save the model
 try:
-    model.save("ppo_maze2")
+    model.save("ppo_maze")
 except Exception as e:
     print(f"Could not save model: {e}")
 
