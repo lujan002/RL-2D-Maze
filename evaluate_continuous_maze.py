@@ -6,14 +6,21 @@ from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.vec_env import VecNormalize, DummyVecEnv
 import imageio
 import time
-
+import matplotlib.pyplot as plt
 import continuous_maze_env
+
+
+# Initialize lists to store rewards and timesteps
+all_rewards = []
+episode_rewards = []
+cumulative_reward = 0
+
 env_id = 'ContinuousMazeEnv-v1'
 vec_env = make_vec_env(env_id, n_envs=1)
 
 # Load the trained model
 start_time = time.time()
-model = PPO.load("ppo_maze2")
+model = PPO.load("ppo_maze")
 print(f"Model loading time: {time.time() - start_time} seconds")
 
 # Evaluate the model
@@ -33,22 +40,30 @@ images = []
 video_length = 5000
 
 for _ in range(video_length):
-    if np.random.rand() < 0.1:
-        action = env.action_space.sample()
-    else:
-        action, _ = model.predict(obs, state=None, deterministic=False)
-    #action, _ = model.predict(obs, state=None, deterministic=False)
-    #print(f"Action: {action}")
-    obs, reward, done, _, _ = env.step(action)
+    # if np.random.rand() < 0.1:
+    #     action = env.action_space.sample()
+    # else:
+    #     action, _ = model.predict(obs, state=None, deterministic=False)
+    action, _ = model.predict(obs, state=None, deterministic=False)
+    print(f"Action: {action}")
+    obs, reward, terminated, truncated, _ = env.step(action)
     #print(f"Obs: {obs}, Reward: {reward}, Done: {done}")
+    if episode_rewards:
+        episode_rewards.append(episode_rewards[-1] + reward)  # Cumulative reward
+    else:
+        episode_rewards.append(reward)  # Initial reward
 
     img = env.render()
     if img is not None and len(img.shape) == 3:  # Ensure img has correct dimensions
         images.append(img)
     else:
         print("Warning: Rendered image has unexpected shape")
-    if done:
+    if terminated or truncated:
+        all_rewards.append(episode_rewards)
+        episode_rewards = []
         obs, _ = env.reset()
+
+all_rewards.append(episode_rewards) #append rewards of unfinished episodes
 
 print(f"Video recording time: {time.time() - start_time} seconds")
 
@@ -62,3 +77,14 @@ else:
 
 # Close the environment
 env.close()
+
+
+# Plot the cumulative rewards vs. timesteps for each episode
+plt.figure()
+for episode_index, episode_rewards in enumerate(all_rewards):
+    plt.plot(episode_rewards, label=f'Episode {episode_index + 1}')
+plt.xlabel('Timesteps')
+plt.ylabel('Cumulative Reward')
+plt.title('Cumulative Reward vs. Timesteps per Episode')
+plt.legend()
+plt.show()
