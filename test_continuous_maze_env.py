@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from Maze import Maze
 from gymnasium.wrappers import FlattenObservation
 import sys
+import numpy as np
 sys.path.append('Users\20Jan\TU Graz Code\2D_maze_project')
 
 # Initialize lists to store rewards and timesteps
@@ -14,23 +15,40 @@ episode_rewards = []
 cumulative_reward = 0
 
 # Define the control keys
-KEY_MAPPING = {
-    pygame.K_w: (0, 1, 0),
-    pygame.K_s: (0, -1, 0),
-    pygame.K_a: (1, 0, 0),
-    pygame.K_d: (-1, 0, 0),
-    pygame.K_q: (0, 0, -1),
-    pygame.K_e: (0, 0, 1)
+TRANSLATION_KEYS = {
+    pygame.K_w: (0, 1),  # Move forward
+    pygame.K_s: (0, -1),  # Move backward
+    pygame.K_a: (1, 0),  # Move left
+    pygame.K_d: (-1, 0)   # Move right
+}
+
+ROTATION_KEYS = {
+    pygame.K_q: -1,  # Rotate left
+    pygame.K_e: 1   # Rotate right
 }
 
 def get_action(keys):
-    action = [0, 0, 0]
-    for key, value in KEY_MAPPING.items():
+    action_type = 0  # Default to translation
+    translation_action = [0, 0]  # Default to no movement
+    rotation_action = 0  # Default to no rotation
+
+    for key, value in TRANSLATION_KEYS.items():
         if keys[key]:
-            action[0] += value[0]
-            action[1] += value[1]
-            action[2] += value[2]
-    return action
+            action_type = 0
+            translation_action = list(value)
+            break
+
+    for key, value in ROTATION_KEYS.items():
+        if keys[key]:
+            action_type = 1
+            rotation_action = value
+            break
+
+    # print(action_type)
+    # print(translation_action)
+    # print(rotation_action)
+
+    return np.array([action_type] + translation_action + [rotation_action], dtype=np.float32)
 
 # Initialize Pygame
 pygame.init()
@@ -49,12 +67,13 @@ except gym.error.Error as e:
 
 done = False
 
-# # qUse this loop for continuous movement 
+# # Use this loop for continuous movement 
 # while not done:
 #     for event in pygame.event.get():
 #         if event.type == pygame.QUIT:
 #             done = True
-#             breakq
+#             break
+
 
 #     keys = pygame.key.get_pressed()
 #     action = get_action(keys)
@@ -77,7 +96,7 @@ while not done:
             elif event.type == pygame.KEYDOWN:
                 keys = pygame.key.get_pressed()
                 action = get_action(keys)
-                if any(action):  # Check if any action is taken
+                if any(action[1:3]) or action[3]:  # Check if any action is taken
                     action_taken = True
                     break
 
@@ -96,6 +115,8 @@ while not done:
         observation, info = wrapped_env.reset()
 
     wrapped_env.render()
+
+all_rewards.append(episode_rewards) #append rewards of unfinished episodes
 
 env.close()
 wrapped_env.close()
