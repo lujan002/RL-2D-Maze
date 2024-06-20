@@ -9,6 +9,8 @@ import random
 from Maze import Maze
 import time
 
+max_episode_steps = 256
+
 # Maze generation functions
 def generate_maze(width, height):
     newMaze = Maze(width,height)
@@ -68,11 +70,11 @@ class ContinuousMazeEnv(gym.Env):
         self.seed = seed
         
         # Define action and observation space
-        self.action_space = spaces.Box(low=-1, high=1, shape=(3,), dtype=np.float32)
+        self.action_space = spaces.Box(low=np.array([0, -1, -1, -1]), high=np.array([1, 1, 1, 1]), dtype=np.float32)
 
         # Continuous observation space: [position_x, position_y, velocity_x, velocity_y, orientation, goal_x, goal_y, lidar_array]
-        # Continuous observation space: [position_relative_x, position_relative_y, orientation, collision, lidar_array]
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(2 + 1 + 1 + 9,), dtype=np.float32)
+        # Continuous observation space: [position_relative_x, position_relative_y, orientation, collision, goal on left/right, lidar_array]
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(2 + 1 + 1 + 1 + 9,), dtype=np.float32)
 
         # Pygame initialization
         self.cell_size = 40  # Each cell is _x_ pixels
@@ -118,6 +120,7 @@ class ContinuousMazeEnv(gym.Env):
         self.visit_count = {}
         #self.new_reward_proximity = 0.0
         self.old_reward_proximity = None
+        self.truncated_count = 0.0
         self.reset()
 
     def generate_goal(self, seed):
@@ -264,95 +267,46 @@ class ContinuousMazeEnv(gym.Env):
         # Calculate the Gaussian-like relative position of the agent with respect to the goal
         return np.exp(-lambda_val * abs(x))
         
-    def calculate_gaussian_orientation(self, agent_orientation, agent_position, goal_position):
+    def calc_exp_decay(self, x, lambda_val):
         #Calculate the Gaussian-like relative orientation of the agent with respect to the goal.
+        # lambda_value = 4 * np.log(2) / np.pi**2 # Lambda for with gaussian dist (x^2)
+        relative_orientation = np.exp(-lambda_val * (x)**2)
 
-        dx = goal_position[0] - agent_position[0]
-        dy = goal_position[1] - agent_position[1]
-        
-        # Calculate the desired angle to face the goal
-        desired_orientation = np.arctan2(dy, dx)
-        
-        # Calculate the difference in orientation
-        orientation_diff = desired_orientation - agent_orientation
-        
-        # Normalize the orientation difference to the range [0, 2*pi)
-        orientation_diff = (orientation_diff + 2 * np.pi) % (2 * np.pi) - np.pi/2
-        
-        # Apply the Gaussian-like function
-        lambda_value = 4 * np.log(2) / np.pi**2 # Lambda for with gaussian dist (x^2)
-        relative_orientation = np.exp(-lambda_value * orientation_diff**2)
-        
+        # print(f"desired_orientation: {desired_orientation}")
+        # print(f"agent_orientation: {agent_orientation}")
         return relative_orientation
     
     def step(self, action):
-        # Select only one action to be active
-        # max_action_index = np.argmax(np.abs(action))
-        # new_action = np.zeros_like(action)
-        # new_action[max_action_index] = action[max_action_index]
-        # action = new_action
-
         # print(f"Received action: {action}")
         self.timesteps += 1
         # print(f"Timestep: {self.timesteps}")
 
-        '''
-        # # Store the old position in case we need to revert
-        # old_position = np.array(self.agent.position)
-
-        # side_velocity = action[0] * 100
-        # forward_velocity = action[1] * 100
-        
-        # # Apply the action to the agent
-        # self.agent.linearVelocity = ((side_velocity * np.cos(self.agent.orientation) - forward_velocity * np.sin(self.agent.orientation)), #x
-        #                              (side_velocity * np.sin(self.agent.orientation) + forward_velocity * np.cos(self.agent.orientation))) #y
-        # self.agent.linearVelocity_np = np.array([self.agent.linearVelocity.x, self.agent.linearVelocity.y])
-        # self.agent.angularVelocity = action[2] * 100  # Apply the rotation action     s
-        # self.agent.torque = self.agent.angularVelocity * self.agent.moment_of_inertia
-        # self.agent.force = self.agent.linearVelocity * self.agent.moment_of_inertia
-        # # print(f"orientation is {self.agent.orientation}") 
-        # print(f"Linear Velocity: {self.agent.linearVelocity_np}")
-        # print(f"Angular Velocity: {self.agent.angularVelocity}")
-        # print(f"Force: {self.agent.force}")
-        # print(f"Torque: {self.agent.torque}")
-        # # Incremental rotation checking
-        # rotation_steps = 10
-        # incremental_rotation = self.agent.angularVelocity * (0.2 / 60) / rotation_steps
-        # collision_detected = False
-        # for _ in range(rotation_steps):
-        #     self.agent.orientation += incremental_rotation
-        #     if self.is_agent_collision(self.agent.position):
-        #         self.agent.orientation -= incremental_rotation
-        #         self.agent.angularVelocity = 0
-        #         collision_detected=True
-        #         break
-
-        ##Step the Box2D world
-        # self.world.Step(1.0 / 60, 6, 2)
-
-        # # Get the new state
-        # new_position = np.array(self.agent.position) # make sure pos is np.array 
-
-        # self.agent.ApplyTorque(self.agent.torque, wake=True)
-        # self.agent.ApplyForceToCenter(self.agent.force, wake=True)
-'''
         # Store the old position for potential collision checks
         old_position = np.array(self.agent.position)
         old_orientation = self.agent.orientation
         
-        # Directly update the position based on the action
-        side_velocity = action[0] * 10  # Adjust scaling factor as needed
-        forward_velocity = action[1] * 10  # Adjust scaling factor as needed
+        # Process actions
+        discrete_action = int(round(action[0]))  # Discrete action (0 or 1)
+        translation_action = action[1:3]
+        rotation_action = action[3]
+        if discrete_action == 0:     
+            # Directly update the position based on the action
+            side_velocity = translation_action[0] * 10  # Adjust scaling factor as needed
+            forward_velocity = translation_action[1] * 10  # Adjust scaling factor as needed
         
-        # Calculate the new position
-        dx = side_velocity * np.cos(self.agent.orientation) - forward_velocity * np.sin(self.agent.orientation)
-        dy = side_velocity * np.sin(self.agent.orientation) + forward_velocity * np.cos(self.agent.orientation)
-        
-        new_position = old_position + np.array([dx, dy])
-        
-        # Update the orientation
-        dtheta = action[2] * 0.3  # Adjust scaling factor as needed
+            # Calculate the new position
+            dx = side_velocity * np.cos(self.agent.orientation) - forward_velocity * np.sin(self.agent.orientation)
+            dy = side_velocity * np.sin(self.agent.orientation) + forward_velocity * np.cos(self.agent.orientation)
+            
+            new_position = old_position + np.array([dx, dy])
+            dtheta = 0 # No roation if moving
+        else:
+		    # Handle rotation
+            dtheta = rotation_action * np.pi / 4  # Adjust scaling factor as needed
+            dx, dy = 0, 0  # No translation if rotating
+            
 
+        # Incrementally check for collisions
         collision_steps = 10
         incremental_translation = np.array([dx, dy]) / collision_steps       
         incremental_rotation = dtheta / collision_steps
@@ -360,47 +314,62 @@ class ContinuousMazeEnv(gym.Env):
         for _ in range(collision_steps):
             self.agent.position += incremental_translation
             self.agent.orientation += incremental_rotation
-
             if self.is_agent_collision(self.agent.position):
                 self.agent.position -= incremental_translation
                 self.agent.orientation -= incremental_rotation
                 collision_detected=True
                 break
-        
+        self.agent.orientation = (self.agent.orientation + (np.pi * 2)) % (np.pi * 2)
         old_relative_position = self.relative_position
         # # Calculate the relative position to the goal using Gaussian function
         relative_x = self.calc_gaussian(self.goal_position[0] - self.agent.position[0], 0.01)
         relative_y = self.calc_gaussian(self.goal_position[1] - self.agent.position[1], 0.01)
         self.relative_position = (relative_x, relative_y)
 
-        # # Calculate the relative orientation to the goal using Gaussian function
-        # # Normalize the orientation to be within the range [0, 2*pi)
-        # self.agent.orientation = self.agent.orientation % (2 * np.pi)
-        # if self.agent.orientation < 0:
-        #     self.agent.orientation += 2 * np.pi
 
-        # # Calculate the angle to the goal
-        # goal_direction = np.arctan2(self.goal_position[1] - self.agent.position[1], self.goal_position[0] - self.agent.position[0])
-        # relative_orientation = (self.agent.orientation - goal_direction) % (2 * np.pi)
-		# # Normalize orientation to [0, 1]
-        # relative_orientation = relative_orientation / (2 * np.pi)
+        # Relative orientation 
+        dx = self.goal_position[0] - self.agent.position[0]
+        dy = self.goal_position[1] - self.agent.position[1]
+        # Calculate the desired angle to face the goal
+        desired_orientation = np.arctan2(dy, dx)
+        # Adjust the desired orientation to have 0 facing south
+        desired_orientation = (desired_orientation + 1.5 * np.pi) % (2 * np.pi)
+        # print(f"desired orientation: {desired_orientation}")
+        # Calculate the difference in orientation
+        orientation_diff = self.agent.orientation - desired_orientation
+        # print(f"orientation diff before: {orientation_diff}")
+        # Adjust orientation_diff to that it is positive when goal is to left of agent and negative when right of agent, and 0 being facing the goal and +/-pi being back to the goal
+        if orientation_diff > np.pi or orientation_diff < -np.pi:
+            if orientation_diff  >= 0:
+                orientation_diff = -(np.pi - (orientation_diff % (np.pi)))
+            elif orientation_diff < 0:
+                orientation_diff = orientation_diff + 2*np.pi #(np.pi + (orientation_diff % (np.pi)))
 
-        relative_orientation = self.calculate_gaussian_orientation(self.agent.orientation, self.agent.position, self.goal_position)
+        # print(f"orientation diff after: {orientation_diff}")
+        relative_orientation = self.calc_gaussian(orientation_diff, 0.5) # 0.5 ensures that curve flattens out to zero around x=pi  
+        if orientation_diff < 0:
+            goal_side = 1 # if goal is to the right of the agent
+        else:
+            goal_side = 0 # if goal is to the left of the agent
+
+        # print(f"relative orientation: {relative_orientation}")
+        # print(f"agent orientation: {self.agent.orientation}")
+
 
         # Perform ray casting
         num_rays = 9
         angles = np.linspace(0 + self.agent.orientation, np.pi + self.agent.orientation, num_rays, endpoint=True)
-
         self.lidar_readings = [self.cast_ray(angle) / self.max_lidar_dist for angle in angles]
         #print(f"LiDAR readings: {self.lidar_readings}")
- 
+
         state = np.array([self.relative_position[0], self.relative_position[1], 
-                          relative_orientation, collision_detected]
+                          relative_orientation, collision_detected, goal_side]
                           + self.lidar_readings, 
                           dtype=np.float32)
         
         # Round the state to n decimal place
         state = np.round(state, 3)
+
 
         ###/// Reward calculation ///###
         max_distance_to_goal = np.linalg.norm(np.array(self.agent.initial_position) - np.array(self.goal_position))
@@ -416,7 +385,7 @@ class ContinuousMazeEnv(gym.Env):
 
         # Large reward for reaching the goal
         if distance_to_goal < 15:  # Assuming a small radius around the goal
-            reward_goal = 3
+            reward_goal = 3 * relative_orientation
             terminated = True
             print(f"Reached the goal in {self.timesteps} timesteps!")
         else:
@@ -426,17 +395,19 @@ class ContinuousMazeEnv(gym.Env):
         reward_time_penalty = -0.1 * ((self.timesteps**0.1)-1)
 
         # Proximity reward
-        if self.old_reward_proximity:
-            self.old_reward_proximity = self.new_reward_proximity
-        else:
-            self.old_reward_proximity = self.calc_gaussian(distance_to_goal, 0.0001) # initialize old_reward to be same as new_reward (returns 0 reward for first step)
-        self.new_reward_proximity = self.calc_gaussian(distance_to_goal, 0.0001)
-        reward_proximity = (self.new_reward_proximity - self.old_reward_proximity) * 300
-        if reward_proximity < 0:
-            reward_proximity = 0.0
+        # if self.old_reward_proximity:
+        #     self.old_reward_proximity = self.new_reward_proximity
+        # else:
+        #     self.old_reward_proximity = self.calc_gaussian(distance_to_goal, 0.0001) # initialize old_reward to be same as new_reward (returns 0 reward for first step)
+        # self.new_reward_proximity = self.calc_gaussian(distance_to_goal, 0.0001)
+        # reward_proximity = (self.new_reward_proximity - self.old_reward_proximity) * 300
+        # if reward_proximity < 0:
+        #     reward_proximity = 0.0
+
+        reward_proximity = 0.0 #self.calc_gaussian(distance_to_goal, 0.01 / ((self.grid_width)/10)) * 0.1
 
         # Orientation reward
-        reward_orientation = self.agent.orientation 
+        reward_orientation = self.calc_exp_decay(orientation_diff, 10) * 0.05
 
         # Collision penalty
         if collision_detected:
@@ -460,16 +431,27 @@ class ContinuousMazeEnv(gym.Env):
 
         self.total_reward = reward_goal + reward_time_penalty + reward_proximity + reward_orientation + reward_collision_penalty + reward_visit + reward_lidar
 
-        truncated = False  # Define your truncation condition (for max steps, etc.)
+        if (self.agent.position[0] <= 0 or self.agent.position[0] >= self.screen_width) or (self.agent.position[1] <= 0 or self.agent.position[1] >= self.screen_height):
+            terminated = True  # if out of bounds, terminate
+            self.total_reward -= 10
 
+        if self.timesteps > max_episode_steps / 2 and self.total_reward < -5:
+            truncated = True  # Define your truncation condition (for max steps, etc.)
+            self.truncated_count += 1
+            print(f"{self.truncated_count} environments truncated due to low reward")
+        else:
+            truncated = False
+        
         # DEBUG
-        print(state)
+        #print(state)
         #self.log_reward_components(reward_goal, reward_time_penalty, reward_proximity, reward_orientation, reward_collision_penalty, reward_visit, reward_lidar)
 
         return state, self.total_reward, terminated, truncated, {}
     
+
     def log_reward_components(self, reward_goal, reward_time_penalty, reward_proximity, reward_orientation, reward_collision, reward_visit, reward_lidar):
         print(f"Reward breakdown -> Goal: {reward_goal}, Time Penalty: {reward_time_penalty}, Proximity: {reward_proximity}, Orientation: {reward_orientation}, Collision: {reward_collision}, Visit: {reward_visit}, LiDAR: {reward_lidar}")
+
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
@@ -501,7 +483,17 @@ class ContinuousMazeEnv(gym.Env):
 
         # Also generate random initial roation 
         self.agent.initial_orientation = random.uniform(0, 2 * np.pi)
-        relative_initial_orientation = self.calculate_gaussian_orientation(self.agent.initial_orientation, self.agent.initial_position, self.goal_position)
+
+        # Relative initial orientation 
+        dx = self.goal_position[0] - self.agent.initial_position[0]
+        dy = self.goal_position[1] - self.agent.initial_position[1]
+        # Calculate the desired angle to face the goal
+        desired_orientation = np.arctan2(dy, dx)
+        # Adjust the desired orientation to have 0 facing south
+        desired_orientation = (desired_orientation + 1.5 * np.pi) % (2 * np.pi)
+        # Calculate the difference in orientation
+        orientation_diff = desired_orientation - self.agent.orientation 
+        relative_initial_orientation = self.calc_gaussian(orientation_diff, 0.5) # 0.5 ensures that curve flattens out to zero around x=pi  
 
         self.agent.position = self.agent.initial_position
         self.agent.orientation = self.agent.initial_orientation
@@ -524,7 +516,7 @@ class ContinuousMazeEnv(gym.Env):
         self.lidar_readings = [self.cast_ray(angle) / self.max_lidar_dist for angle in angles]
 
         initial_state = np.array([self.relative_initial_position[0], self.relative_initial_position[1], 
-                          relative_initial_orientation, 0]
+                          relative_initial_orientation, 0, 0]
                           + self.lidar_readings, 
                           dtype=np.float32)
         
@@ -623,7 +615,7 @@ try:
     register(
         id='ContinuousMazeEnv-v1',
         entry_point='continuous_maze_env:ContinuousMazeEnv',
-        max_episode_steps=256,
+        max_episode_steps=max_episode_steps,
     )
     print("Environment `ContinuousMazeEnv-v1` registered successfully.")
 except Exception as e:
