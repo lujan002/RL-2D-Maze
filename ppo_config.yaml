@@ -17,9 +17,9 @@ ppo:
   target_kl: None  # Limit the KL divergence between updates, by default, there is no limit.
   policy_kwargs: 
     log_std_init: -1.0 # Reduce initial exploration noise. e.g., setting log_std_init to -2.0, which results in std ≈ 0.135
-    net_arch: 
-        - pi: [64, 64]
-        - vf: [64, 64]
+    # net_arch: 
+    #     - pi: [64, 64]
+    #     - vf: [64, 64]
   # Additional arguments to be passed to the policy on creation.
   tensorboard_log: "./ppo_tensorboard/"  # Directory for logging TensorBoard data.
   seed: None  # Seed for the random number generators.
