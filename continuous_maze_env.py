@@ -73,8 +73,8 @@ class ContinuousMazeEnv(gym.Env):
         self.action_space = spaces.Box(low=np.array([0, -1, -1, -1]), high=np.array([1, 1, 1, 1]), dtype=np.float32)
 
         # Continuous observation space: [position_x, position_y, velocity_x, velocity_y, orientation, goal_x, goal_y, lidar_array]
-        # Continuous observation space: [position_relative_x, position_relative_y, orientation, collision, goal on left/right, lidar_array]
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(2 + 1 + 1 + 1 + 9,), dtype=np.float32)
+        # Continuous observation space: [position_relative_x, position_relative_y, orientation, collision, lidar_array]
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(2 + 1 + 1 + 9,), dtype=np.float32)
 
         # Pygame initialization
         self.cell_size = 40  # Each cell is _x_ pixels
@@ -97,8 +97,8 @@ class ContinuousMazeEnv(gym.Env):
         # self.agent.CreateCircleFixture(radius=10, density=1.0, friction=0.3)
 
         # Define the vertices of a rectangle centered at the agent's position
-        self.half_width = 7
-        self.half_height = 10
+        self.half_width = 3
+        self.half_height = 5
         self.agent_vertices = [(-self.half_width, -self.half_height), (self.half_width, -self.half_height), (self.half_width, self.half_height), (-self.half_width, self.half_height)]
         self.agent.CreatePolygonFixture(vertices=self.agent_vertices, density=1.0, friction=0.3)
         # print(f"Agent created at position: {self.agent.position}")  # Debugging line
@@ -291,9 +291,9 @@ class ContinuousMazeEnv(gym.Env):
         discrete_action = int(round(action[0]))  # Discrete action (0 or 1)
         translation_action = action[1:3]
         rotation_action = action[3]
-        if discrete_action == 0:     
+        if discrete_action == 0:
             # Directly update the position based on the action
-            side_velocity = translation_action[0] * 10  # Adjust scaling factor as needed
+            side_velocity = translation_action[0] * 2.5  # Adjust scaling factor as needed
             forward_velocity = translation_action[1] * 10  # Adjust scaling factor as needed
         
             # Calculate the new position
@@ -306,6 +306,7 @@ class ContinuousMazeEnv(gym.Env):
 		    # Handle rotation
             dtheta = rotation_action * np.pi / 4  # Adjust scaling factor as needed
             dx, dy = 0, 0  # No translation if rotating
+            new_position = old_position
             
 
         # Incrementally check for collisions
@@ -350,10 +351,10 @@ class ContinuousMazeEnv(gym.Env):
         # print(f"orientation diff after: {orientation_diff}")
         # relative_orientation = self.calc_exp_decay(orientation_diff, 2) # ensures that curve flattens out to zero around x=pi  
         relative_orientation = orientation_diff / np.pi # normalize with a linear function so that 0 maps to 0, π maps to 1, and -π maps to -1. Hopefully this gives better orientation vision to the agent.
-        if orientation_diff < 0:
-            goal_side = 1 # if goal is to the right of the agent
-        else:
-            goal_side = 0 # if goal is to the left of the agent
+        # if orientation_diff < 0:
+        #     goal_side = 1 # if goal is to the right of the agent
+        # else:
+        #     goal_side = 0 # if goal is to the left of the agent
 
         # print(f"relative orientation: {relative_orientation}")
         # print(f"agent orientation: {self.agent.orientation}")
@@ -366,7 +367,7 @@ class ContinuousMazeEnv(gym.Env):
         #print(f"LiDAR readings: {self.lidar_readings}")
 
         state = np.array([self.relative_position[0], self.relative_position[1], 
-                          relative_orientation, collision_detected, goal_side]
+                          relative_orientation, collision_detected]
                           + self.lidar_readings, 
                           dtype=np.float32)
         
@@ -388,7 +389,7 @@ class ContinuousMazeEnv(gym.Env):
 
         # Large reward for reaching the goal
         if distance_to_goal < 15:  # Assuming a small radius around the goal
-            reward_goal = 4 * self.calc_exp_decay(relative_orientation, 1)
+            reward_goal = 5 * self.calc_exp_decay(relative_orientation, 1) #* max_distance_to_goal / self.screen_width
             terminated = True
             print(f"Reached the goal in {self.timesteps} timesteps!")
         else:
@@ -410,7 +411,7 @@ class ContinuousMazeEnv(gym.Env):
     
         # Orientation reward
         if distance_to_goal < self.record_distance: # only give reward if agent moves closer to the goal
-            reward_orientation = self.calc_gaussian_2(relative_orientation, 2) * 0.3
+            reward_orientation = self.calc_gaussian_2(relative_orientation, 2) * np.sqrt((new_position[0] - old_position[0])**2 * (new_position[1] - old_position[1])**2) * 0.005
             reward_proximity = 0.0 #self.calc_gaussian(distance_to_goal, 0.0001 / ((self.grid_width)/10)) * 0.1
             self.record_distance = distance_to_goal
         else:
@@ -514,10 +515,10 @@ class ContinuousMazeEnv(gym.Env):
         # print(f"orientation diff after: {orientation_diff}")
         relative_initial_orientation = orientation_diff / np.pi # normalize with a linear function so that 0 maps to 0, π maps to 1, and -π maps to -1. Hopefully this gives better orientation vision to the agent.
 
-        if orientation_diff < 0:
-            goal_side = 1 # if goal is to the right of the agent
-        else:
-            goal_side = 0 # if goal is to the left of the agent
+        # if orientation_diff < 0:
+        #     goal_side = 1 # if goal is to the right of the agent
+        # else:
+        #     goal_side = 0 # if goal is to the left of the agent
 
         # print(f"relative orientation: {relative_orientation}")
         # print(f"agent orientation: {self.agent.orientation}")
@@ -544,7 +545,7 @@ class ContinuousMazeEnv(gym.Env):
         self.lidar_readings = [self.cast_ray(angle) / self.max_lidar_dist for angle in angles]
 
         initial_state = np.array([self.relative_initial_position[0], self.relative_initial_position[1], 
-                          relative_initial_orientation, 0, goal_side]
+                          relative_initial_orientation, 0]
                           + self.lidar_readings, 
                           dtype=np.float32)
         
