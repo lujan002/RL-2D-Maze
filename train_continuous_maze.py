@@ -9,6 +9,62 @@ import yaml
 
 import continuous_maze_env
 
+
+
+
+from stable_baselines3.common.policies import ActorCriticPolicy
+from torch import nn
+from stable_baselines3.common.torch_layers import MlpExtractor
+
+class CustomMLPPolicy(ActorCriticPolicy):
+	def __init__(self, *args, **kwargs):
+		super(CustomMLPPolicy, self).__init__(*args, **kwargs)
+		self.net_arch = [
+			dict(pi=[10, 10, 10, 4], vf=[10, 10, 10, 4])
+		]
+
+	def _build_mlp_extractor(self):
+		"""
+		Create the policy and value networks (multi-layer perceptrons).
+		"""
+		self.mlp_extractor = MlpExtractor(self.features_dim, net_arch=self.net_arch,
+										  activation_fn=nn.ReLU,
+										  dropout_prob=0.1)
+
+class MlpExtractor(nn.Module):
+	def __init__(self, feature_dim, net_arch, activation_fn, dropout_prob):
+		super(MlpExtractor, self).__init__()
+		self.feature_dim = feature_dim
+		self.activation_fn = activation_fn
+		self.dropout_prob = dropout_prob
+
+		# Build the policy network
+		policy_layers = []
+		last_layer_dim = feature_dim
+		for layer in net_arch[0]['pi']:
+			policy_layers.append(nn.Linear(last_layer_dim, layer))
+			policy_layers.append(self.activation_fn())
+			policy_layers.append(nn.Dropout(p=self.dropout_prob))
+			last_layer_dim = layer
+		self.policy_net = nn.Sequential(*policy_layers)
+
+		# Build the value network
+		value_layers = []
+		last_layer_dim = feature_dim
+		for layer in net_arch[0]['vf']:
+			value_layers.append(nn.Linear(last_layer_dim, layer))
+			value_layers.append(self.activation_fn())
+			value_layers.append(nn.Dropout(p=self.dropout_prob))
+			last_layer_dim = layer
+		self.value_net = nn.Sequential(*value_layers)
+
+	def forward(self, features):
+		"""
+		Forward pass in the policy and value networks.
+		"""
+		return self.policy_net(features), self.value_net(features)
+      
+
 # Define the custom callback
 class RewardLoggingCallback(BaseCallback):
     def __init__(self, check_freq, var_threshold, min_steps, verbose=1):
@@ -82,10 +138,10 @@ model = PPO(**ppo_params, env=vec_env, verbose=1)
 print(f"Model device: {model.device}")
 
 # Define the callback with a frequency of x steps
-reward_logging_callback = RewardLoggingCallback(check_freq=20000/64, var_threshold=0.1, min_steps=100)
+reward_logging_callback = RewardLoggingCallback(check_freq=20000//64, var_threshold=0.1, min_steps=100)
 
 # Train the model
-model.learn(total_timesteps=600000, callback=reward_logging_callback)  # Adjust the number of timesteps as needed
+model.learn(total_timesteps=300000, callback=reward_logging_callback)  # Adjust the number of timesteps as needed
 
 import sys
 np.set_printoptions(threshold=sys.maxsize)
