@@ -74,12 +74,12 @@ class ContinuousMazeEnv(gym.Env):
 
         # Continuous observation space: [position_x, position_y, velocity_x, velocity_y, orientation, goal_x, goal_y, lidar_array]
         # Continuous observation space: [position_relative_x, position_relative_y, orientation, collision, lidar_array]
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(2 + 1 + 1 + 9,), dtype=np.float32)
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(2 + 1 + 1 + 8,), dtype=np.float32)
 
         # Pygame initialization
         self.cell_size = 40  # Each cell is _x_ pixels
-        self.grid_width = 10  # _ cells wide
-        self.grid_height = 10  # _ cells tall
+        self.grid_width = 3  # _ cells wide
+        self.grid_height = 3  # _ cells tall
         self.screen_width = (self.cell_size * (self.grid_width * 2  + 1) // 16) * 16
         self.screen_height = (self.cell_size * (self.grid_height * 2  + 1) // 16) * 16
         self.scale = 1  # Pixels per meter (since cell size is already in pixels)
@@ -361,8 +361,8 @@ class ContinuousMazeEnv(gym.Env):
 
 
         # Perform ray casting
-        num_rays = 9
-        angles = np.linspace(0 + self.agent.orientation, np.pi + self.agent.orientation, num_rays, endpoint=True)
+        num_rays = 8
+        angles = np.linspace(0 + self.agent.orientation, 2* np.pi + self.agent.orientation, num_rays, endpoint=False)
         self.lidar_readings = [self.cast_ray(angle) / self.max_lidar_dist for angle in angles]
         #print(f"LiDAR readings: {self.lidar_readings}")
 
@@ -372,7 +372,7 @@ class ContinuousMazeEnv(gym.Env):
                           dtype=np.float32)
         
         # Round the state to n decimal place
-        state = np.round(state, 3)
+        state = np.round(state, 2)
 
 
         ###/// Reward calculation ///###
@@ -452,7 +452,7 @@ class ContinuousMazeEnv(gym.Env):
             truncated = False
         
         # DEBUG
-        #print(state)
+        print(state)
         #self.log_reward_components(reward_goal, reward_time_penalty, reward_proximity, reward_orientation, reward_collision_penalty, reward_visit, reward_lidar)
 
         return state, self.total_reward, terminated, truncated, {}
@@ -470,7 +470,7 @@ class ContinuousMazeEnv(gym.Env):
 
         self.total_reward = 0.0
         self.record_distance = 999999
-        self.maze_grid = generate_empty_maze(self.grid_width, self.grid_height)
+        self.maze_grid = generate_maze(self.grid_width, self.grid_height)
 
         # Generate a random initial position within the bounds of the screen size
         screen_width_bound = self.screen_width / self.scale
@@ -535,8 +535,8 @@ class ContinuousMazeEnv(gym.Env):
         self.timesteps = 0.0
         self.visit_count = {}  # Reset visit count
         
-        num_rays = 9
-        angles = np.linspace(0, np.pi + self.agent.orientation, num_rays, endpoint=True)
+        num_rays = 8
+        angles = np.linspace(0, np.pi + self.agent.orientation, num_rays, endpoint=False)
         # lidar_readings = []
         # for angle in angles:
         #     distance = self.cast_ray(angle)
@@ -550,7 +550,7 @@ class ContinuousMazeEnv(gym.Env):
                           dtype=np.float32)
         
         # Round the initial state to n decimal place
-        initial_state = np.round(initial_state, 3)
+        initial_state = np.round(initial_state, 2)
 
         return initial_state, {}
 
@@ -617,8 +617,8 @@ class ContinuousMazeEnv(gym.Env):
         #     pygame.draw.line(self.screen, (0, 0, 255), start_point, end_point, 1)  # Blue lines for LiDAR rays
 
         # Render LiDAR rays
-        num_rays = 9
-        angles = np.linspace(0 + self.agent.orientation, np.pi + self.agent.orientation, num_rays, endpoint=True)
+        num_rays = 8
+        angles = np.linspace(0 + self.agent.orientation, 2*np.pi + self.agent.orientation, num_rays, endpoint=False)
         for angle, distance in zip(angles, self.lidar_readings):
             start_point = self.scale * np.array(self.agent.position)
             end_point = start_point + self.scale * distance * self.max_lidar_dist * np.array([np.cos(angle), np.sin(angle)])
