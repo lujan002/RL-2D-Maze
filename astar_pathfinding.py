@@ -1,6 +1,7 @@
 import heapq
 from Maze import Maze
 import numpy as np
+from collections import deque
 
 class Graph:
     def __init__(self):
@@ -8,37 +9,59 @@ class Graph:
         self.weights = {}
 
     def neighbors(self, node):
-        return self.edges[node]
+        return self.edges.get(node, [])
 
     def cost(self, from_node, to_node):
         return self.weights[(from_node, to_node)]
 
-def heuristic(a, b):
-    return abs(a[0] - b[0]) + abs(a[1] - b[1])
-
-def a_star_search(graph, start, goal):
-    queue = []
-    heapq.heappush(queue, (0, start))
-    came_from = {}
-    cost_so_far = {}
-    came_from[start] = None
-    cost_so_far[start] = 0
+def flood_fill(graph, goal):
+    distances = {node: float('inf') for node in graph.edges}
+    queue = deque([goal])
+    distances[goal] = 0
 
     while queue:
-        current = heapq.heappop(queue)[1]
-
-        if current == goal:
-            break
-
+        current = queue.popleft()
+        current_distance = distances[current]
         for neighbor in graph.neighbors(current):
-            new_cost = cost_so_far[current] + graph.cost(current, neighbor)
-            if neighbor not in cost_so_far or new_cost < cost_so_far[neighbor]:
-                cost_so_far[neighbor] = new_cost
-                priority = new_cost + heuristic(goal, neighbor)
-                heapq.heappush(queue, (priority, neighbor))
-                came_from[neighbor] = current
+            if current_distance + graph.cost(current, neighbor) < distances[neighbor]:
+                distances[neighbor] = current_distance + graph.cost(current, neighbor)
+                queue.append(neighbor)
 
-    return came_from, cost_so_far
+    return distances
+
+def heuristic(neighbor, distances):
+	print("distances:")
+	for node, distances in distances.items():
+		print(f"{node}: {distances}")
+
+	print(f"neightbor: {neighbor}")
+	return distances[neighbor[1], neighbor[0]]
+
+def a_star_search(graph, start, goal):
+	queue = []
+	heapq.heappush(queue, (0, start))
+	came_from = {}
+	cost_so_far = {}
+	came_from[start] = None
+	cost_so_far[start] = 0
+	distances = flood_fill(graph, goal)
+	while queue:
+		current = heapq.heappop(queue)[1]
+
+		if current == goal:
+			break
+
+		for neighbor in graph.neighbors(current):
+			new_cost = cost_so_far[current] + graph.cost(current, neighbor)
+			if neighbor not in cost_so_far or new_cost < cost_so_far[neighbor]:
+				cost_so_far[neighbor] = new_cost
+				priority = new_cost + distances[neighbor]
+				heapq.heappush(queue, (priority, neighbor))
+				came_from[neighbor] = current
+
+		print(f"Current: {current}, Cost so far: {cost_so_far}")
+
+	return came_from, cost_so_far
 
 def reconstruct_path(came_from, start, goal):
     current = goal
@@ -48,6 +71,11 @@ def reconstruct_path(came_from, start, goal):
         current = came_from[current]
     path.append(start)
     path.reverse()
+
+	# Remove the first and last nodes
+    if len(path) > 1:
+        path = path[1:-1]
+
     print(f"path: {path}")
     return path
 
@@ -176,6 +204,28 @@ def find_closest_node(position, graph):
 			closest_node = node
 			min_distance = distance
 	return closest_node
+
+# def find_closest_node(position, goal, graph):
+# 	closest_agent_node = None
+# 	closest_goal_node = None
+# 	min_agent_distance = float('inf')
+# 	min_goal_distance = float('inf')
+# 	agent_to_goal_distance = np.sqrt((position[0] - goal[0]) ** 2 + (position[1] - goal[1]) ** 2)
+	
+# 	for node in graph.edges:
+# 		node_to_goal_distance = np.sqrt((node[0] - goal[0]) ** 2 + (node[1] - goal[1]) ** 2)
+# 		node_to_agent_distance = np.sqrt((node[0] - position[0]) ** 2 + (node[1] - position[1]) ** 2)
+		
+# 		if node_to_goal_distance < agent_to_goal_distance and node_to_agent_distance < min_agent_distance:
+# 			closest_agent_node = node
+# 			min_agent_distance = node_to_agent_distance
+
+# 		if node_to_agent_distance < agent_to_goal_distance and node_to_goal_distance < min_goal_distance:
+# 			closest_goal_node = node
+# 			min_goal_distance = node_to_goal_distance
+		
+# 	return closest_agent_node, closest_goal_node
+
 
 # # Maze generation functions
 # def generate_maze(width, height):
