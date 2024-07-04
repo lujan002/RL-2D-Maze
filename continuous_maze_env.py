@@ -8,6 +8,7 @@ from pygame.locals import QUIT
 import random
 from Maze import Maze
 import time
+import astar_pathfinding as astar
 
 max_episode_steps = 256
 
@@ -411,16 +412,12 @@ class ContinuousMazeEnv(gym.Env):
     
         # Orientation reward
         if distance_to_goal < self.record_distance: # only give reward if agent moves closer to the goal
-            reward_orientation = self.calc_gaussian_2(relative_orientation, 2) * np.sqrt((new_position[0] - old_position[0])**2 * (new_position[1] - old_position[1])**2) * 0.005
-            reward_proximity = 0.0 #self.calc_gaussian(distance_to_goal, 0.0001 / ((self.grid_width)/10)) * 0.1
+            reward_orientation = self.calc_gaussian_2(relative_orientation, 2) * np.sqrt((new_position[0] - old_position[0])**2 * (new_position[1] - old_position[1])**2) * 0.005 * 0.0
+            reward_proximity = (-1/self.screen_width * abs(distance_to_goal) + 1) * 0.1 #self.calc_gaussian(distance_to_goal, 0.0001 / ((self.grid_width)/10)) 
             self.record_distance = distance_to_goal
         else:
             reward_orientation = 0.0
             reward_proximity = 0.0
-
-        # Collision penalty
-        if collision_detected:
-            reward_collision_penalty = -0.0
 
         # Visit count penalty
         current_cell = (int(self.agent.position[0] / self.cell_size), int(self.agent.position[1] / self.cell_size))
@@ -428,6 +425,10 @@ class ContinuousMazeEnv(gym.Env):
             self.visit_count[current_cell] = 0
             reward_visit = 0
         self.visit_count[current_cell] += 1
+
+        # Collision penalty
+        if collision_detected:
+            reward_collision_penalty = -0.1
 
         # LiDAR based reward
         current_lidar_reward = 0.0
@@ -439,6 +440,8 @@ class ContinuousMazeEnv(gym.Env):
         self.previous_lidar_reward = current_lidar_reward  # Update for the next step
 
         self.total_reward = reward_goal + reward_time_penalty + reward_proximity + reward_orientation + reward_collision_penalty + reward_visit + reward_lidar
+
+        
 
         if (self.agent.position[0] <= 0 or self.agent.position[0] >= self.screen_width) or (self.agent.position[1] <= 0 or self.agent.position[1] >= self.screen_height):
             terminated = True  # if out of bounds, terminate
@@ -452,7 +455,7 @@ class ContinuousMazeEnv(gym.Env):
             truncated = False
         
         # DEBUG
-        print(state)
+        #print(state)
         #self.log_reward_components(reward_goal, reward_time_penalty, reward_proximity, reward_orientation, reward_collision_penalty, reward_visit, reward_lidar)
 
         return state, self.total_reward, terminated, truncated, {}
@@ -472,6 +475,7 @@ class ContinuousMazeEnv(gym.Env):
         self.record_distance = 999999
         self.maze_grid = generate_maze(self.grid_width, self.grid_height)
 
+        
         # Generate a random initial position within the bounds of the screen size
         screen_width_bound = self.screen_width / self.scale
         screen_height_bound = self.screen_height / self.scale
@@ -490,6 +494,25 @@ class ContinuousMazeEnv(gym.Env):
         relative_x = self.calc_exp_decay(self.goal_position[0] - self.agent.initial_position[0], 0.01)
         relative_y = self.calc_exp_decay(self.goal_position[1] - self.agent.initial_position[1], 0.01)
         self.relative_initial_position = (relative_x, relative_y)
+
+
+        # Get path to the goal from A* algorithm
+        graph = astar.create_graph_from_maze(self.maze_grid, self.grid_width * 2 + 1)
+        print("graph.edges:")
+        for node, edges in graph.edges.items():
+            print(f"{node}: {edges}")
+        # Start node is the node with the closest euclidian distance to the agent on spawn
+        start_node = astar.find_closest_node(self.agent.initial_position, graph)
+        print(f"self.agent.initial_position node: {self.agent.initial_position}")      
+        print(f"start node: {start_node}")
+        # Goal node is the node with the closest euclidian distance to the goal
+        goal_node = astar.find_closest_node(self.goal_position, graph)
+        print(f"self.goal_position: {self.goal_position}")      
+        print(f"goal node: {goal_node}")
+        came_from, cost_so_far = astar.a_star_search(graph, start_node, goal_node)
+        self.astar_path = astar.reconstruct_path(came_from, start_node, goal_node)
+        print(f"self.astar_path: {self.astar_path}")
+
 
         # Also generate random initial roation 
         self.agent.initial_orientation = random.uniform(0, 2 * np.pi)
@@ -584,6 +607,11 @@ class ContinuousMazeEnv(gym.Env):
                     pygame.draw.rect(self.screen, (255, 255, 255), (x, y + self.cell_size, self.cell_size, self.cell_size))
                 if "E" in tile.connectTo:
                     pygame.draw.rect(self.screen, (255, 255, 255), (x + 2 * self.cell_size, y + self.cell_size, self.cell_size, self.cell_size))
+
+        # Draw A* path
+        if self.astar_path:
+            for (x, y) in self.astar_path:
+                pygame.draw.circle(self.screen, (128, 0, 128), (x, y), 5)
 
         # Draw agent
         position = self.scale * np.array(self.agent.position)
