@@ -1,7 +1,7 @@
 import heapq
 from Maze import Maze
 import numpy as np
-from collections import deque
+from collections import deque, defaultdict
 
 class Graph:
     def __init__(self):
@@ -29,20 +29,12 @@ def flood_fill(graph, goal):
 
     return distances
 
-def heuristic(neighbor, distances):
-	print("distances:")
-	for node, distances in distances.items():
-		print(f"{node}: {distances}")
-
-	print(f"neightbor: {neighbor}")
-	return distances[neighbor[1], neighbor[0]]
-
 def a_star_search(graph, start, goal):
 	queue = []
 	heapq.heappush(queue, (0, start))
-	came_from = {}
+	came_from = defaultdict(list)
 	cost_so_far = {}
-	came_from[start] = None
+	came_from[start] = [None]
 	cost_so_far[start] = 0
 	distances = flood_fill(graph, goal)
 	while queue:
@@ -57,74 +49,43 @@ def a_star_search(graph, start, goal):
 				cost_so_far[neighbor] = new_cost
 				priority = new_cost + distances[neighbor]
 				heapq.heappush(queue, (priority, neighbor))
-				came_from[neighbor] = current
+				came_from[neighbor] = [current]
+			elif new_cost == cost_so_far[neighbor]:
+				came_from[neighbor].append(current)
 
-		print(f"Current: {current}, Cost so far: {cost_so_far}")
+		#print(f"Current: {current}, Cost so far: {cost_so_far}")
 
 	return came_from, cost_so_far
 
+
 def reconstruct_path(came_from, start, goal):
-    current = goal
-    path = []
-    while current != start:
-        path.append(current)
-        current = came_from[current]
-    path.append(start)
-    path.reverse()
+	paths = []
 
-	# Remove the first and last nodes
-    if len(path) > 1:
-        path = path[1:-1]
+	def backtrack(current_path, current):
+		if current == start:
+			complete_path = current_path[::-1]  # Reverse the path
+			if len(complete_path) > 2:
+				# Remove the first and last nodes
+				trimmed_path = complete_path[1:-1]
+				paths.append(trimmed_path)
+			return
+		for predecessor in came_from[current]:
+			if predecessor is not None:
+				backtrack(current_path + [predecessor], predecessor)
 
-    print(f"path: {path}")
-    return path
-
-# def create_graph_from_maze(maze_grid):
-#     graph = Graph()
-#     print(f"maze_grid: {maze_grid}")
-#     for row in maze_grid:
-#         for tile in row:
-#             node = (tile.coordinateX, tile.coordinateY) 
-#             graph.edges[node] = []
-#             for direction in tile.connectTo:
-#                 if direction == "N":
-#                     neighbor = (tile.coordinateX, tile.coordinateY - 1)
-#                 elif direction == "S":
-#                     neighbor = (tile.coordinateX, tile.coordinateY + 1)
-#                 elif direction == "W":
-#                     neighbor = (tile.coordinateX - 1, tile.coordinateY)
-#                 elif direction == "E":
-#                     neighbor = (tile.coordinateX + 1, tile.coordinateY)
-#                 if 0 <= neighbor[0] < len(maze_grid[0]) and 0 <= neighbor[1] < len(maze_grid):
-#                     graph.edges[node].append(neighbor)
-#                     graph.weights[(node, neighbor)] = 1  # Assuming uniform cost
-
-	# # Apply the transformation to all edges and weights
-    # transformed_edges = {}
-    # transformed_weights = {}
-    # for node in graph.edges:
-    #     transformed_node = (node[0] * 40 + 20, node[1] * 40 + 20)
-    #     transformed_edges[transformed_node] = [
-    #         (neighbor[0] * 40 + 20, neighbor[1] * 40 + 20) for neighbor in graph.edges[node]
-    #     ]
-    #     for neighbor in graph.edges[node]:
-    #         transformed_neighbor = (neighbor[0] * 40 + 20, neighbor[1] * 40 + 20)
-    #         transformed_weights[(transformed_node, transformed_neighbor)] = graph.weights[(node, neighbor)]
-    # graph.edges = transformed_edges
-    # graph.weights = transformed_weights
-
-#     return graph
+	backtrack([goal], goal)
+	return paths
 
 def create_graph_from_maze(maze_grid, grid_size):
 	graph = Graph()
-	print(f"maze grid {maze_grid}")
+	#print(f"maze grid {maze_grid}")
 	
 	# Initialize the (2*grid_size+1) x grid_size grid with zeros
 	nodes = np.zeros((grid_size, grid_size))
 
 	for row in maze_grid:
 		for tile in row:
-			print(f"tile connect to: {tile.connectTo}")
+			#print(f"tile connect to: {tile.connectTo}")
 			
 			# Populate the center nodes
 			node_x = tile.coordinateX * 2 + 1
@@ -143,8 +104,8 @@ def create_graph_from_maze(maze_grid, grid_size):
 					nodes[node_y, node_x + 1] = 1
 
 			# Print the resulting grid for debugging
-			for row in nodes:
-				print(row)
+			#for row in nodes:
+				#print(row)
 
 	# Add nodes and edges to the graph
 	for i in range(grid_size):
@@ -169,9 +130,9 @@ def create_graph_from_maze(maze_grid, grid_size):
 					graph.edges[node].append(neighbor)
 					graph.weights[(node, neighbor)] = 1
 
-	print("graph.edges:")
-	for node, edges in graph.edges.items():
-		print(f"{node}: {edges}")
+	#print("graph.edges:")
+	#for node, edges in graph.edges.items():
+		#print(f"{node}: {edges}")
 
 
 	# Apply the transformation to all edges and weights
@@ -204,28 +165,6 @@ def find_closest_node(position, graph):
 			closest_node = node
 			min_distance = distance
 	return closest_node
-
-# def find_closest_node(position, goal, graph):
-# 	closest_agent_node = None
-# 	closest_goal_node = None
-# 	min_agent_distance = float('inf')
-# 	min_goal_distance = float('inf')
-# 	agent_to_goal_distance = np.sqrt((position[0] - goal[0]) ** 2 + (position[1] - goal[1]) ** 2)
-	
-# 	for node in graph.edges:
-# 		node_to_goal_distance = np.sqrt((node[0] - goal[0]) ** 2 + (node[1] - goal[1]) ** 2)
-# 		node_to_agent_distance = np.sqrt((node[0] - position[0]) ** 2 + (node[1] - position[1]) ** 2)
-		
-# 		if node_to_goal_distance < agent_to_goal_distance and node_to_agent_distance < min_agent_distance:
-# 			closest_agent_node = node
-# 			min_agent_distance = node_to_agent_distance
-
-# 		if node_to_agent_distance < agent_to_goal_distance and node_to_goal_distance < min_goal_distance:
-# 			closest_goal_node = node
-# 			min_goal_distance = node_to_goal_distance
-		
-# 	return closest_agent_node, closest_goal_node
-
 
 # # Maze generation functions
 # def generate_maze(width, height):
