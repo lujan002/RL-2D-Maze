@@ -71,7 +71,8 @@ class ContinuousMazeEnv(gym.Env):
         self.seed = seed
         
         # Define action and observation space
-        self.action_space = spaces.Box(low=np.array([0, -1, -1, -1]), high=np.array([1, 1, 1, 1]), dtype=np.float32)
+        # self.action_space = spaces.Box(low=np.array([0, -1, -1, -1]), high=np.array([1, 1, 1, 1]), dtype=np.float32) # translation and rotation action space
+        self.action_space = spaces.Box(low=np.array([-1, -1]), high=np.array([1, 1]), dtype=np.float32) # only translation action space
 
         # Continuous observation space: [position_x, position_y, velocity_x, velocity_y, orientation, goal_x, goal_y, lidar_array]
         # Continuous observation space: [position_relative_x, position_relative_y, orientation, collision, lidar_array]
@@ -290,6 +291,7 @@ class ContinuousMazeEnv(gym.Env):
         old_position = np.array(self.agent.position)
         old_orientation = self.agent.orientation
         
+        '''
         # Process actions
         discrete_action = int(round(action[0]))  # Discrete action (0 or 1)
         translation_action = action[1:3]
@@ -311,6 +313,20 @@ class ContinuousMazeEnv(gym.Env):
             dx, dy = 0, 0  # No translation if rotating
             new_position = old_position
             
+        '''
+
+        # Process actions (only translation)
+        # Directly update the position based on the action
+        side_velocity = action[0] * 100  # Adjust scaling factor as needed
+        forward_velocity = action[1] * 100  # Adjust scaling factor as needed
+    
+        # Calculate the new position
+        dx = side_velocity * np.cos(self.agent.orientation) - forward_velocity * np.sin(self.agent.orientation)
+        dy = side_velocity * np.sin(self.agent.orientation) + forward_velocity * np.cos(self.agent.orientation)
+        
+        new_position = old_position + np.array([dx, dy])
+        dtheta = 0 # No roation
+
 
         # Incrementally check for collisions
         collision_steps = 10
