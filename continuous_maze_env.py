@@ -76,7 +76,7 @@ class ContinuousMazeEnv(gym.Env):
 
         # Continuous observation space: [position_x, position_y, velocity_x, velocity_y, orientation, goal_x, goal_y, lidar_array]
         # Continuous observation space: [position_relative_x, position_relative_y, orientation, collision, lidar_array]
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(2 + 1 + 1 + 8,), dtype=np.float32)
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(2 + (2) + 1 + 1 + 8,), dtype=np.float32)
 
         # Pygame initialization
         self.cell_size = 40  # Each cell is _x_ pixels
@@ -126,6 +126,9 @@ class ContinuousMazeEnv(gym.Env):
         self.record_distance = 9999999
 
         self.breadcrumbs_collected = []  # Track collected breadcrumbs
+
+
+        self.relative_breadcrumb_position = (0.0, 0.0)#placeholder
         self.reset()
 
     def generate_goal(self, seed):
@@ -317,8 +320,8 @@ class ContinuousMazeEnv(gym.Env):
 
         # Process actions (only translation)
         # Directly update the position based on the action
-        side_velocity = action[0] * 100  # Adjust scaling factor as needed
-        forward_velocity = action[1] * 100  # Adjust scaling factor as needed
+        side_velocity = action[0] * 10  # Adjust scaling factor as needed
+        forward_velocity = action[1] * 10  # Adjust scaling factor as needed
     
         # Calculate the new position
         dx = side_velocity * np.cos(self.agent.orientation) - forward_velocity * np.sin(self.agent.orientation)
@@ -385,15 +388,6 @@ class ContinuousMazeEnv(gym.Env):
         self.lidar_readings = [self.cast_ray(angle) / self.max_lidar_dist for angle in angles]
         #print(f"LiDAR readings: {self.lidar_readings}")
 
-        state = np.array([self.relative_position[0], self.relative_position[1], 
-                          relative_orientation, collision_detected]
-                          + self.lidar_readings, 
-                          dtype=np.float32)
-        
-        # Round the state to n decimal place
-        state = np.round(state, 2)
-
-
         ###/// Reward calculation ///###
         max_distance_to_goal = np.linalg.norm(np.array(self.agent.initial_position) - np.array(self.goal_position))
         distance_to_goal = np.linalg.norm(np.array(self.agent.position) - np.array(self.goal_position))
@@ -408,7 +402,7 @@ class ContinuousMazeEnv(gym.Env):
 
         # Large reward for reaching the goal
         if distance_to_goal < 15:  # Assuming a small radius around the goal
-            reward_goal = 5 * self.calc_exp_decay(relative_orientation, 1) #* max_distance_to_goal / self.screen_width
+            reward_goal = 5 #* self.calc_exp_decay(relative_orientation, 1) #* max_distance_to_goal / self.screen_width
             terminated = True
             print(f"Reached the goal in {self.timesteps} timesteps!")
         else:
@@ -462,17 +456,28 @@ class ContinuousMazeEnv(gym.Env):
         breadcrumb_collection_radius = 25  # Define the collection radius
         reward_breadcrumb = 0.0
 
+        distance_to_nearest_breadcrumb = 99999.0
         if self.astar_path:
             for path in self.astar_path:
                 for i, (x, y) in enumerate(path):
                     if not self.breadcrumbs_collected[i]:
                         distance_to_breadcrumb = np.linalg.norm(np.array(self.agent.position) - np.array([x, y]))
+                        #print(f"Distance to breadcrumb {i}: {distance_to_breadcrumb}")
                         if distance_to_breadcrumb < breadcrumb_collection_radius:
                             reward_breadcrumb = 0.5*(sum(self.breadcrumbs_collected))  # Define the reward for collecting a breadcrumb
                             self.breadcrumbs_collected[i] = True  # Mark as collected
-                            print(f"Breadcrumb {sum(self.breadcrumbs_collected)} collected")
+                            #print(f"Breadcrumb {sum(self.breadcrumbs_collected)} collected")
+                        if distance_to_breadcrumb < distance_to_nearest_breadcrumb:
+                            distance_to_nearest_breadcrumb = distance_to_breadcrumb
+                            relative_bx = self.calc_exp_decay(x - self.agent.position[0], 0.05)
+                            relative_by = self.calc_exp_decay(y - self.agent.position[1], 0.05)
+                            self.relative_breadcrumb_position = (relative_bx, relative_by)
 
-        self.total_reward = reward_goal + reward_time_penalty + reward_proximity + reward_orientation + reward_collision_penalty + reward_visit + reward_lidar * reward_breadcrumb
+        #print(f"Distance to nearest breadcrumb: {distance_to_nearest_breadcrumb}")
+
+        reward_breadcrumb_proximity = self.calc_gaussian(distance_to_nearest_breadcrumb, 0.001) * 0.05
+
+        self.total_reward = reward_goal + reward_time_penalty + reward_proximity + reward_orientation + reward_collision_penalty + reward_visit + reward_lidar + reward_breadcrumb + reward_breadcrumb_proximity
 
         # if out of bounds, terminate
         if (self.agent.position[0] <= 0 or self.agent.position[0] >= self.screen_width) or (self.agent.position[1] <= 0 or self.agent.position[1] >= self.screen_height):
@@ -486,15 +491,23 @@ class ContinuousMazeEnv(gym.Env):
         else:
             truncated = False
         
+        state = np.array([self.relative_position[0], self.relative_position[1], self.relative_breadcrumb_position[0], self.relative_breadcrumb_position[1],
+                          relative_orientation, collision_detected]
+                          + self.lidar_readings, 
+                          dtype=np.float32)
+        
+        # Round the state to n decimal place
+        state = np.round(state, 2)
+
         # DEBUG
         #print(state)
-        #self.log_reward_components(reward_goal, reward_time_penalty, reward_proximity, reward_orientation, reward_collision_penalty, reward_visit, reward_lidar, reward_breadcrumb)
+        #self.log_reward_components(reward_goal, reward_time_penalty, reward_proximity, reward_orientation, reward_collision_penalty, reward_visit, reward_lidar, reward_breadcrumb, reward_breadcrumb_proximity)
 
         return state, self.total_reward, terminated, truncated, {}
     
 
-    def log_reward_components(self, reward_goal, reward_time_penalty, reward_proximity, reward_orientation, reward_collision, reward_visit, reward_lidar, reward_breadcrumb):
-        print(f"Reward breakdown -> Goal: {reward_goal}, Time Penalty: {reward_time_penalty}, Proximity: {reward_proximity}, Orientation: {reward_orientation}, Collision: {reward_collision}, Visit: {reward_visit}, LiDAR: {reward_lidar}, Breadcrumb: {reward_breadcrumb}")
+    def log_reward_components(self, reward_goal, reward_time_penalty, reward_proximity, reward_orientation, reward_collision, reward_visit, reward_lidar, reward_breadcrumb, reward_breadcrumb_proximity):
+        print(f"Reward breakdown -> Goal: {reward_goal}, Time Penalty: {reward_time_penalty}, Proximity: {reward_proximity}, Orientation: {reward_orientation}, Collision: {reward_collision}, Visit: {reward_visit}, LiDAR: {reward_lidar}, Breadcrumb: {reward_breadcrumb}, Breadcrumb Proximity: {reward_breadcrumb_proximity}")
 
 
     def reset(self, *, seed=None, options=None):
@@ -598,7 +611,7 @@ class ContinuousMazeEnv(gym.Env):
 
         self.lidar_readings = [self.cast_ray(angle) / self.max_lidar_dist for angle in angles]
 
-        initial_state = np.array([self.relative_initial_position[0], self.relative_initial_position[1], 
+        initial_state = np.array([self.relative_initial_position[0], self.relative_initial_position[1], 0,0,
                           relative_initial_orientation, 0]
                           + self.lidar_readings, 
                           dtype=np.float32)
