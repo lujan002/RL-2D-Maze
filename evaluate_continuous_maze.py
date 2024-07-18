@@ -16,11 +16,15 @@ episode_rewards = []
 cumulative_reward = 0
 
 env_id = 'ContinuousMazeEnv-v1'
+#env_id = 'LunarLander-v2'
+
 vec_env = make_vec_env(env_id, n_envs=1)
 
 # Load the trained model
 start_time = time.time()
 model = PPO.load("ppo_maze")
+#model = PPO.load("ppo_lunar_lander")
+
 print(f"Model loading time: {time.time() - start_time} seconds")
 
 # Evaluate the model
@@ -31,23 +35,24 @@ print(f"Mean reward: {mean_reward}, Std reward: {std_reward}")
 
 # Close the evaluation environment and create a new one with rendering for video recording
 vec_env.close()
-env = gym.make('ContinuousMazeEnv-v1', render_mode='rgb_array')
+#env = gym.make(env_id, render_mode='rgb_array')
+env = gym.make(env_id, render_mode='human')
 
 # Reset the environment and start recording the video
 start_time = time.time()
 obs, _ = env.reset()
 images = []
-video_length = 5000
+video_length = 4000
 
 for _ in range(video_length):
     # if np.random.rand() < 0.1:
     #     action = env.action_space.sample()
     # else:
     #     action, _ = model.predict(obs, state=None, deterministic=False)
-    action, _ = model.predict(obs, state=None, deterministic=False)
+    action, _ = model.predict(obs, state=None, deterministic=True)
     print(f"Action: {action}")
     obs, reward, terminated, truncated, _ = env.step(action)
-    #print(f"Obs: {obs}, Reward: {reward}, Done: {done}")
+    print(f"Obs: {obs}, Reward: {reward}")
     if episode_rewards:
         episode_rewards.append(episode_rewards[-1] + reward)  # Cumulative reward
     else:
@@ -70,7 +75,7 @@ print(f"Video recording time: {time.time() - start_time} seconds")
 # Save the video
 start_time = time.time()
 if images:
-    imageio.mimsave('maze_agent.mp4', [np.array(img) for img in images], fps=30)
+    imageio.mimsave('lundar_lander.mp4', [np.array(img) for img in images], fps=30)
     print(f"Video saving time: {time.time() - start_time} seconds")
 else:
     print("Error: No images to save")
