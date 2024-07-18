@@ -48,23 +48,28 @@ def get_action(keys):
     # print(translation_action)
     # print(rotation_action)
 
-    return np.array([action_type] + translation_action + [rotation_action], dtype=np.float32)
+    #return np.array([action_type] + translation_action + [rotation_action], dtype=np.float32) # for translation and rotation
+    return np.array(translation_action, dtype=np.float32) # translation only
+
 
 # Initialize Pygame
 pygame.init()
 
-try:
-    env = gym.make('ContinuousMazeEnv-v1')
-    print("Environment `ContinuousMazeEnv-v1` created successfully.")
-    wrapped_env = FlattenObservation(env)
-    print("Environment `ContinuousMazeEnv-v1` wrapped successfully.")
-    observation, info = wrapped_env.reset(seed=None)
-    wrapped_env.render()
-    print("Environment reset successfully.")
-    print(observation, info)
-except gym.error.Error as e:
-    print(f"Failed to create or reset environment: {e}")
+def start_env():
+    try:
+        env = gym.make('ContinuousMazeEnv-v1')
+        print("Environment `ContinuousMazeEnv-v1` created successfully.")
+        wrapped_env = FlattenObservation(env)
+        print("Environment `ContinuousMazeEnv-v1` wrapped successfully.")
+        observation, info = wrapped_env.reset(seed=None)
+        wrapped_env.render()
+        print("Environment reset successfully.")
+        print(observation, info)
+    except gym.error.Error as e:
+        print(f"Failed to create or reset environment: {e}")
+    return wrapped_env
 
+wrapped_env = start_env()
 done = False
 
 # # Use this loop for continuous movement 
@@ -96,14 +101,16 @@ while not done:
             elif event.type == pygame.KEYDOWN:
                 keys = pygame.key.get_pressed()
                 action = get_action(keys)
-                if any(action[1:3]) or action[3]:  # Check if any action is taken
+                #if any(action[1:3]) or action[3]:  # Check if any action is taken
+                if any(action[0:2]):
                     action_taken = True
                     break
 
-    if done:
-        break
 
     observation, reward, terminated, truncated, info = wrapped_env.step(action)
+    print(f"Observation: {observation}")
+    print(f"Reward: {reward}")
+
     if episode_rewards:
         episode_rewards.append(episode_rewards[-1] + reward)  # Cumulative reward
     else:
@@ -112,7 +119,8 @@ while not done:
     if terminated:
         all_rewards.append(episode_rewards)
         episode_rewards = []
-        observation, info = wrapped_env.reset()
+        wrapped_env.close()
+        wrapped_env = start_env()
 
     wrapped_env.render()
 
