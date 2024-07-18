@@ -70,13 +70,16 @@ class ContinuousMazeEnv(gym.Env):
         self.render_mode = render_mode
         self.seed = seed
         
+        self.num_recent_positions = 25  # Number of recent positions to track
+        self.recent_positions = np.zeros((self.num_recent_positions, 2))
+
         # Define action and observation space
         # self.action_space = spaces.Box(low=np.array([0, -1, -1, -1]), high=np.array([1, 1, 1, 1]), dtype=np.float32) # translation and rotation action space
         self.action_space = spaces.Box(low=np.array([-1, -1]), high=np.array([1, 1]), dtype=np.float32) # only translation action space
 
         # Continuous observation space: [position_x, position_y, velocity_x, velocity_y, orientation, goal_x, goal_y, lidar_array]
-        # Continuous observation space: [position_relative_x, position_relative_y, orientation, collision, lidar_array]
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(2 + (2) + 1 + 1 + 8,), dtype=np.float32)
+        # Continuous observation space: [position_relative_x, position_relative_y, lidar_array]
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(2 + 8 + (self.num_recent_positions * 2),), dtype=np.float32)
 
         # Pygame initialization
         self.cell_size = 40  # Each cell is _x_ pixels
@@ -124,11 +127,11 @@ class ContinuousMazeEnv(gym.Env):
         self.old_reward_proximity = None
         self.truncated_count = 0.0
         self.record_distance = 9999999
-
         self.breadcrumbs_collected = []  # Track collected breadcrumbs
-
-
         self.relative_breadcrumb_position = (0.0, 0.0)#placeholder
+        self.visited_positions = []
+
+        
         self.reset()
 
     def generate_goal(self, seed):
@@ -350,7 +353,23 @@ class ContinuousMazeEnv(gym.Env):
         relative_x = self.calc_exp_decay(self.goal_position[0] - self.agent.position[0], 0.01)
         relative_y = self.calc_exp_decay(self.goal_position[1] - self.agent.position[1], 0.01)
         self.relative_position = (relative_x, relative_y)
+            
+        # Update the recent positions array
+        self.recent_positions = np.roll(self.recent_positions, -1, axis=0)  # Shift the array left
+        self.recent_positions[-1] = new_position  # Update the last position
 
+        # Normalize recent positions
+        normalized_recent_positions = np.zeros_like(self.recent_positions)
+        for i in range(self.num_recent_positions):
+            distance_x = self.recent_positions[i][0] - new_position[0]
+            distance_y = self.recent_positions[i][1] - new_position[1]
+            normalized_x = self.calc_gaussian(distance_x, 0.001)
+            normalized_y = self.calc_gaussian(distance_y, 0.001)
+            if distance_x < 0:
+                normalized_x *= -1
+            if distance_y < 0:
+                normalized_y *= -1
+            normalized_recent_positions[i] = [normalized_x, normalized_y]
 
         # Relative orientation 
         dx = self.goal_position[0] - self.agent.position[0]
@@ -464,50 +483,64 @@ class ContinuousMazeEnv(gym.Env):
                         distance_to_breadcrumb = np.linalg.norm(np.array(self.agent.position) - np.array([x, y]))
                         #print(f"Distance to breadcrumb {i}: {distance_to_breadcrumb}")
                         if distance_to_breadcrumb < breadcrumb_collection_radius:
-                            reward_breadcrumb = 0.5*(sum(self.breadcrumbs_collected))  # Define the reward for collecting a breadcrumb
+                            reward_breadcrumb = 0.3 #*(sum(self.breadcrumbs_collected))  # Define the reward for collecting a breadcrumb
                             self.breadcrumbs_collected[i] = True  # Mark as collected
                             #print(f"Breadcrumb {sum(self.breadcrumbs_collected)} collected")
                         if distance_to_breadcrumb < distance_to_nearest_breadcrumb:
                             distance_to_nearest_breadcrumb = distance_to_breadcrumb
-                            relative_bx = self.calc_exp_decay(x - self.agent.position[0], 0.05)
-                            relative_by = self.calc_exp_decay(y - self.agent.position[1], 0.05)
+                            relative_bx = self.calc_exp_decay(x - self.agent.position[0], 0.01)
+                            relative_by = self.calc_exp_decay(y - self.agent.position[1], 0.01)
                             self.relative_breadcrumb_position = (relative_bx, relative_by)
 
+        if all(b == True for b in self.breadcrumbs_collected):
+            self.relative_breadcrumb_position = self.relative_position
         #print(f"Distance to nearest breadcrumb: {distance_to_nearest_breadcrumb}")
+        
 
-        reward_breadcrumb_proximity = self.calc_gaussian(distance_to_nearest_breadcrumb, 0.001) * 0.05
+        reward_breadcrumb_proximity = self.calc_gaussian(distance_to_nearest_breadcrumb, 0.001) * 0.05 * 0.0
 
-        self.total_reward = reward_goal + reward_time_penalty + reward_proximity + reward_orientation + reward_collision_penalty + reward_visit + reward_lidar + reward_breadcrumb + reward_breadcrumb_proximity
+        # Check if the new position is within a small radius of any previously visited position
+        visit_radius = 8  # Define a small radius for the visit check
+        within_visited_area = any(np.linalg.norm(self.agent.position - np.array(visited_pos)) < visit_radius for visited_pos in self.visited_positions)
+        if within_visited_area:
+            reward_stationary = -0.01
+        else:
+            reward_stationary = 0.01
+
+        # Update the list of visited positions
+        self.visited_positions.append(new_position)
+
+
+        self.total_reward = reward_goal + reward_time_penalty + reward_proximity + reward_orientation + reward_collision_penalty + reward_visit + reward_lidar + reward_breadcrumb + reward_breadcrumb_proximity + reward_stationary
 
         # if out of bounds, terminate
         if (self.agent.position[0] <= 0 or self.agent.position[0] >= self.screen_width) or (self.agent.position[1] <= 0 or self.agent.position[1] >= self.screen_height):
             terminated = True  
             self.total_reward -= 10
 
-        if self.timesteps > max_episode_steps / 2 and self.total_reward < -5:
-            truncated = True  # Define your truncation condition (for max steps, etc.)
-            self.truncated_count += 1
-            print(f"{self.truncated_count} environments truncated due to low reward")
-        else:
-            truncated = False
-        
-        state = np.array([self.relative_position[0], self.relative_position[1], self.relative_breadcrumb_position[0], self.relative_breadcrumb_position[1],
-                          relative_orientation, collision_detected]
-                          + self.lidar_readings, 
-                          dtype=np.float32)
+        # if self.timesteps > max_episode_steps / 2 and self.total_reward < -5:
+        #     truncated = True  # Define your truncation condition (for max steps, etc.)
+        #     self.truncated_count += 1
+        #     print(f"{self.truncated_count} environments truncated due to low reward")
+        # else:
+        #     truncated = False
+        truncated = False
+        state = np.concatenate(([self.relative_breadcrumb_position[0], self.relative_breadcrumb_position[1]], 
+                            self.lidar_readings, 
+                            normalized_recent_positions.flatten()), axis=0).astype(np.float32)
         
         # Round the state to n decimal place
         state = np.round(state, 2)
 
         # DEBUG
         #print(state)
-        #self.log_reward_components(reward_goal, reward_time_penalty, reward_proximity, reward_orientation, reward_collision_penalty, reward_visit, reward_lidar, reward_breadcrumb, reward_breadcrumb_proximity)
+        #self.log_reward_components(reward_goal, reward_time_penalty, reward_proximity, reward_orientation, reward_collision_penalty, reward_visit, reward_lidar, reward_breadcrumb, reward_breadcrumb_proximity, reward_stationary)
 
         return state, self.total_reward, terminated, truncated, {}
     
 
-    def log_reward_components(self, reward_goal, reward_time_penalty, reward_proximity, reward_orientation, reward_collision, reward_visit, reward_lidar, reward_breadcrumb, reward_breadcrumb_proximity):
-        print(f"Reward breakdown -> Goal: {reward_goal}, Time Penalty: {reward_time_penalty}, Proximity: {reward_proximity}, Orientation: {reward_orientation}, Collision: {reward_collision}, Visit: {reward_visit}, LiDAR: {reward_lidar}, Breadcrumb: {reward_breadcrumb}, Breadcrumb Proximity: {reward_breadcrumb_proximity}")
+    def log_reward_components(self, reward_goal, reward_time_penalty, reward_proximity, reward_orientation, reward_collision, reward_visit, reward_lidar, reward_breadcrumb, reward_breadcrumb_proximity, reward_stationary):
+        print(f"Reward breakdown -> Goal: {reward_goal}, Time Penalty: {reward_time_penalty}, Proximity: {reward_proximity}, Orientation: {reward_orientation}, Collision: {reward_collision}, Visit: {reward_visit}, LiDAR: {reward_lidar}, Breadcrumb: {reward_breadcrumb}, Breadcrumb Proximity: {reward_breadcrumb_proximity}, Stationary Penalty: {reward_stationary}")
 
 
     def reset(self, *, seed=None, options=None):
@@ -559,7 +592,7 @@ class ContinuousMazeEnv(gym.Env):
         self.breadcrumbs_collected = [False] * sum(len(path) for path in self.astar_path) # Initialize all as not collected
 
         # Also generate random initial roation 
-        self.agent.initial_orientation = random.uniform(0, 2 * np.pi)
+        self.agent.initial_orientation = np.pi #random.uniform(0, 2 * np.pi)
 
         # Relative initial orientation 
         dx = self.goal_position[0] - self.agent.initial_position[0]
@@ -602,6 +635,9 @@ class ContinuousMazeEnv(gym.Env):
         self.timesteps = 0.0
         self.visit_count = {}  # Reset visit count
         
+        self.visited_positions = []
+        normalized_recent_positions = np.zeros((self.num_recent_positions, 2))
+
         num_rays = 8
         angles = np.linspace(0, np.pi + self.agent.orientation, num_rays, endpoint=False)
         # lidar_readings = []
@@ -611,10 +647,9 @@ class ContinuousMazeEnv(gym.Env):
 
         self.lidar_readings = [self.cast_ray(angle) / self.max_lidar_dist for angle in angles]
 
-        initial_state = np.array([self.relative_initial_position[0], self.relative_initial_position[1], 0,0,
-                          relative_initial_orientation, 0]
-                          + self.lidar_readings, 
-                          dtype=np.float32)
+        initial_state = np.concatenate(([0, 0], 
+                            self.lidar_readings, 
+                            normalized_recent_positions.flatten()), axis=0).astype(np.float32)
         
         # Round the initial state to n decimal place
         initial_state = np.round(initial_state, 2)
@@ -652,12 +687,17 @@ class ContinuousMazeEnv(gym.Env):
                 if "E" in tile.connectTo:
                     pygame.draw.rect(self.screen, (255, 255, 255), (x + 2 * self.cell_size, y + self.cell_size, self.cell_size, self.cell_size))
         
+        # Draw visited positions as red circles
+        for pos in self.visited_positions:
+            pygame.draw.circle(self.screen, (255, 125, 0), (int(pos[0] * self.scale), int(pos[1] * self.scale)), 8)
+
+
         # Draw A* path as breadcrumbs
         if self.astar_path:
             for path in self.astar_path:
                 for i, (x, y) in enumerate(path):
                     color = (0, 128, 0) if not self.breadcrumbs_collected[i] else (128, 128, 128)  # Green if not collected, grey if collected
-                    pygame.draw.circle(self.screen, color, (x, y), 5)
+                    pygame.draw.circle(self.screen, color, (x, y), 4)
 
         # Draw agent
         position = self.scale * np.array(self.agent.position)
@@ -697,6 +737,7 @@ class ContinuousMazeEnv(gym.Env):
             start_point = self.scale * np.array(self.agent.position)
             end_point = start_point + self.scale * distance * self.max_lidar_dist * np.array([np.cos(angle), np.sin(angle)])
             pygame.draw.line(self.screen, (0, 0, 255), start_point, end_point, 1)  # Blue lines for LiDAR rays
+
 
         pygame.display.flip()
         self.clock.tick(self.metadata['render_fps'])
