@@ -16,6 +16,8 @@ from stable_baselines3.common.policies import ActorCriticPolicy
 from torch import nn
 from stable_baselines3.common.torch_layers import MlpExtractor
 
+
+
 class CustomMLPPolicy(ActorCriticPolicy):
 	def __init__(self, *args, **kwargs):
 		super(CustomMLPPolicy, self).__init__(*args, **kwargs)
@@ -100,8 +102,8 @@ class RewardLoggingCallback(BaseCallback):
         return True
 
 env_id = 'ContinuousMazeEnv-v1'
-env = gym.make('ContinuousMazeEnv-v1', render_mode=None)
-vec_env = make_vec_env(env_id, n_envs=128)
+env = gym.make(env_id, render_mode=None)
+vec_env = make_vec_env(env_id, n_envs=64)
 #vec_env_norm = VecNormalize(vec_env, norm_obs=False, norm_reward=False, clip_obs=10.)
 
 # Load the YAML configuration file
@@ -131,17 +133,20 @@ for key in ['seed', 'target_kl', 'policy_kwargs']:
     if ppo_params[key] == "None":
         ppo_params[key] = None
 
+#ppo_params[ent_coef] = max(min_ent_coef, ent_coef_decay_rate * ent_coef)
+
 # Create the PPO model with extracted parameters
 model = PPO(**ppo_params, env=vec_env, verbose=1)
 
 # Print device information
 print(f"Model device: {model.device}")
 
+
 # Define the callback with a frequency of x steps
-reward_logging_callback = RewardLoggingCallback(check_freq=20000//64, var_threshold=0.1, min_steps=100)
+reward_logging_callback = RewardLoggingCallback(check_freq=20000/64, var_threshold=0.1, min_steps=100)
 
 # Train the model
-model.learn(total_timesteps=300000, callback=reward_logging_callback)  # Adjust the number of timesteps as needed
+model.learn(total_timesteps=500000, callback=reward_logging_callback)  # Adjust the number of timesteps as needed
 
 import sys
 np.set_printoptions(threshold=sys.maxsize)
@@ -168,7 +173,7 @@ np.set_printoptions(threshold=sys.maxsize)
 
 # Save the model
 try:
-    model.save("ppo_maze")
+    model.save("ppo_maze2")
 except Exception as e:
     print(f"Could not save model: {e}")
 
