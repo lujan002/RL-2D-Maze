@@ -73,14 +73,6 @@ class ContinuousMazeEnv(gym.Env):
         self.num_recent_positions = 25  # Number of recent positions to track
         self.recent_positions = np.zeros((self.num_recent_positions, 2))
 
-        # Define action and observation space
-        # self.action_space = spaces.Box(low=np.array([0, -1, -1, -1]), high=np.array([1, 1, 1, 1]), dtype=np.float32) # translation and rotation action space
-        self.action_space = spaces.Box(low=np.array([-1, -1]), high=np.array([1, 1]), dtype=np.float32) # only translation action space
-
-        # Continuous observation space: [position_x, position_y, velocity_x, velocity_y, orientation, goal_x, goal_y, lidar_array]
-        # Continuous observation space: [position_relative_x, position_relative_y, lidar_array]
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(2 + 8 + (self.num_recent_positions * 2),), dtype=np.float32)
-
         # Pygame initialization
         self.cell_size = 40  # Each cell is _x_ pixels
         self.grid_width = 3  # _ cells wide
@@ -88,6 +80,10 @@ class ContinuousMazeEnv(gym.Env):
         self.screen_width = (self.cell_size * (self.grid_width * 2  + 1) // 16) * 16
         self.screen_height = (self.cell_size * (self.grid_height * 2  + 1) // 16) * 16
         self.scale = 1  # Pixels per meter (since cell size is already in pixels)
+
+        # Define action and observation space
+        self.action_space = spaces.Box(low=np.array([-1, -1]), high=np.array([1, 1]), dtype=np.float32) # only translation action space
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(2 + 8 + self.num_recent_positions*2,), dtype=np.float32)
 
         # Initialize the Box2D world
         self.world = world(gravity=(0, 0))
@@ -121,7 +117,7 @@ class ContinuousMazeEnv(gym.Env):
         self.timesteps = 0.0
         self.max_lidar_dist = 100
         self.previous_lidar_reward = 0.0
-        self.relative_position = (0.0, 0.0) # Initialization
+        self.relative_goal_position = (0.0, 0.0) # Initialization
         self.visit_count = {}
         #self.new_reward_proximity = 0.0
         self.old_reward_proximity = None
@@ -129,8 +125,7 @@ class ContinuousMazeEnv(gym.Env):
         self.record_distance = 9999999
         self.breadcrumbs_collected = []  # Track collected breadcrumbs
         self.relative_breadcrumb_position = (0.0, 0.0)#placeholder
-        self.visited_positions = []
-
+        #self.visited_positions = []
         
         self.reset()
 
@@ -232,23 +227,6 @@ class ContinuousMazeEnv(gym.Env):
                             return True
         return False
     
-    # def cast_ray(self, angle):
-    #     start_point = vec2(self.agent.position)
-    #     max_distance = 100.0
-    #     step_size = 5.0  # The step size for checking along the ray
-    #     direction = vec2(np.cos(angle), np.sin(angle))
-        
-    #     # Iterate along the ray path in small steps
-    #     for step in np.arange(0, max_distance, step_size):
-    #         end_point = start_point + step * direction
-    #         if self.is_lidar_collision(end_point):
-    #             # Return the distance to the collision point
-    #             distance = np.linalg.norm(end_point - start_point)
-    #             return distance
-
-    #     if not self.is_lidar_collision(end_point):
-    #         return max_distance
-    
     def cast_ray(self, angle):
         start_point = vec2(self.agent.position)
         direction = vec2(np.cos(angle), np.sin(angle))
@@ -297,34 +275,11 @@ class ContinuousMazeEnv(gym.Env):
         old_position = np.array(self.agent.position)
         old_orientation = self.agent.orientation
         
-        '''
-        # Process actions
-        discrete_action = int(round(action[0]))  # Discrete action (0 or 1)
-        translation_action = action[1:3]
-        rotation_action = action[3]
-        if discrete_action == 0:
-            # Directly update the position based on the action
-            side_velocity = translation_action[0] * 2.5  # Adjust scaling factor as needed
-            forward_velocity = translation_action[1] * 10  # Adjust scaling factor as needed
-        
-            # Calculate the new position
-            dx = side_velocity * np.cos(self.agent.orientation) - forward_velocity * np.sin(self.agent.orientation)
-            dy = side_velocity * np.sin(self.agent.orientation) + forward_velocity * np.cos(self.agent.orientation)
-            
-            new_position = old_position + np.array([dx, dy])
-            dtheta = 0 # No roation if moving
-        else:
-		    # Handle rotation
-            dtheta = rotation_action * np.pi / 4  # Adjust scaling factor as needed
-            dx, dy = 0, 0  # No translation if rotating
-            new_position = old_position
-            
-        '''
 
         # Process actions (only translation)
         # Directly update the position based on the action
-        side_velocity = action[0] * 10  # Adjust scaling factor as needed
-        forward_velocity = action[1] * 10  # Adjust scaling factor as needed
+        side_velocity = action[0] * 20  # Adjust scaling factor as needed
+        forward_velocity = action[1] * 20  # Adjust scaling factor as needed
     
         # Calculate the new position
         dx = side_velocity * np.cos(self.agent.orientation) - forward_velocity * np.sin(self.agent.orientation)
@@ -348,18 +303,29 @@ class ContinuousMazeEnv(gym.Env):
                 collision_detected=True
                 break
         self.agent.orientation = (self.agent.orientation + (np.pi * 2)) % (np.pi * 2)
-        old_relative_position = self.relative_position
+        old_relative_goal_position = self.relative_goal_position
         # # Calculate the relative position to the goal using Gaussian function
         relative_x = self.calc_exp_decay(self.goal_position[0] - self.agent.position[0], 0.01)
         relative_y = self.calc_exp_decay(self.goal_position[1] - self.agent.position[1], 0.01)
-        self.relative_position = (relative_x, relative_y)
+        self.relative_goal_position = (relative_x, relative_y)
             
+        # Initialize recent positions if it does not exist
+        if self.recent_positions is None:
+            print("initialized recent positions")
+            self.recent_positions = np.full((self.num_recent_positions, 2), np.array(self.agent.position))
+
         # Update the recent positions array
         self.recent_positions = np.roll(self.recent_positions, -1, axis=0)  # Shift the array left
-        self.recent_positions[-1] = new_position  # Update the last position
+        self.recent_positions[-1] = old_position  # Update the last position
+
+        # Check if recent_positions is all zeros
+        if np.all(self.recent_positions == 0):
+            self.recent_positions = np.full((self.num_recent_positions, 2), np.array(self.agent.position))
+        #print(f"self.recent_positions {self.recent_positions}")
 
         # Normalize recent positions
-        normalized_recent_positions = np.zeros_like(self.recent_positions)
+        normalized_recent_positions = np.zeros((self.num_recent_positions, 2))
+
         for i in range(self.num_recent_positions):
             distance_x = self.recent_positions[i][0] - new_position[0]
             distance_y = self.recent_positions[i][1] - new_position[1]
@@ -370,6 +336,7 @@ class ContinuousMazeEnv(gym.Env):
             if distance_y < 0:
                 normalized_y *= -1
             normalized_recent_positions[i] = [normalized_x, normalized_y]
+            #print(type(normalized_recent_positions.flatten()))
 
         # Relative orientation 
         dx = self.goal_position[0] - self.agent.position[0]
@@ -421,7 +388,7 @@ class ContinuousMazeEnv(gym.Env):
 
         # Large reward for reaching the goal
         if distance_to_goal < 15:  # Assuming a small radius around the goal
-            reward_goal = 5 #* self.calc_exp_decay(relative_orientation, 1) #* max_distance_to_goal / self.screen_width
+            reward_goal = 2 #* self.calc_exp_decay(relative_orientation, 1) #* max_distance_to_goal / self.screen_width
             terminated = True
             print(f"Reached the goal in {self.timesteps} timesteps!")
         else:
@@ -429,7 +396,7 @@ class ContinuousMazeEnv(gym.Env):
 
         # Time penalty
         #reward_time_penalty = -0.1 * ((self.timesteps**0.1)-1)
-        reward_time_penalty = -0.005
+        reward_time_penalty = -0.00
 
         # Proximity reward
         # if self.old_reward_proximity:
@@ -441,35 +408,20 @@ class ContinuousMazeEnv(gym.Env):
         # if reward_proximity < 0:
         #     reward_proximity = 0.0
 
-    
-        # Orientation reward
-        if distance_to_goal < self.record_distance: # only give reward if agent moves closer to the goal
-            reward_orientation = self.calc_gaussian_2(relative_orientation, 2) * np.sqrt((new_position[0] - old_position[0])**2 * (new_position[1] - old_position[1])**2) * 0.005 * 0.0
-            reward_proximity = (-1/self.screen_width * abs(distance_to_goal) + 1) * 0.0 #self.calc_gaussian(distance_to_goal, 0.0001 / ((self.grid_width)/10)) 
-            self.record_distance = distance_to_goal
-        else:
-            reward_orientation = 0.0
-            reward_proximity = 0.0
-
-        # Visit count penalty
-        current_cell = (int(self.agent.position[0] / self.cell_size), int(self.agent.position[1] / self.cell_size))
-        if current_cell not in self.visit_count:
-            self.visit_count[current_cell] = 0
-            reward_visit = 0
-        self.visit_count[current_cell] += 1
 
         # Collision penalty
         if collision_detected:
-            reward_collision_penalty = -0.0
+            reward_collision_penalty = -0.1
 
         # LiDAR based reward
-        current_lidar_reward = 0.0
-        lidar_threshold = 20.0  # Define a threshold for considering a distance as "too close"
-        for distance in self.lidar_readings:
-            if distance < lidar_threshold:
-                current_lidar_reward = (lidar_threshold - (self.half_height + self.half_width) / 2 - distance) * 0.0
-        reward_lidar = current_lidar_reward - self.previous_lidar_reward
-        self.previous_lidar_reward = current_lidar_reward  # Update for the next step
+        reward_lidar = 0.0
+        # current_lidar_reward = 0.0
+        # lidar_threshold = 20.0  # Define a threshold for considering a distance as "too close"
+        # for distance in self.lidar_readings:
+        #     if distance < lidar_threshold:
+        #         current_lidar_reward = (lidar_threshold - (self.half_height + self.half_width) / 2 - distance) * 0.0
+        # reward_lidar = current_lidar_reward - self.previous_lidar_reward
+        # self.previous_lidar_reward = current_lidar_reward  # Update for the next step
 
         # Breadcrumb reward
         breadcrumb_collection_radius = 25  # Define the collection radius
@@ -483,7 +435,7 @@ class ContinuousMazeEnv(gym.Env):
                         distance_to_breadcrumb = np.linalg.norm(np.array(self.agent.position) - np.array([x, y]))
                         #print(f"Distance to breadcrumb {i}: {distance_to_breadcrumb}")
                         if distance_to_breadcrumb < breadcrumb_collection_radius:
-                            reward_breadcrumb = 0.3 #*(sum(self.breadcrumbs_collected))  # Define the reward for collecting a breadcrumb
+                            reward_breadcrumb = 0.2 #*(sum(self.breadcrumbs_collected))  # Define the reward for collecting a breadcrumb
                             self.breadcrumbs_collected[i] = True  # Mark as collected
                             #print(f"Breadcrumb {sum(self.breadcrumbs_collected)} collected")
                         if distance_to_breadcrumb < distance_to_nearest_breadcrumb:
@@ -493,23 +445,39 @@ class ContinuousMazeEnv(gym.Env):
                             self.relative_breadcrumb_position = (relative_bx, relative_by)
 
         if all(b == True for b in self.breadcrumbs_collected):
-            self.relative_breadcrumb_position = self.relative_position
+            self.relative_breadcrumb_position = self.relative_goal_position
         #print(f"Distance to nearest breadcrumb: {distance_to_nearest_breadcrumb}")
         
 
-        reward_breadcrumb_proximity = self.calc_gaussian(distance_to_nearest_breadcrumb, 0.001) * 0.05 * 0.0
+        reward_breadcrumb_proximity = self.calc_gaussian(distance_to_nearest_breadcrumb, 0.001) * 0.05 
 
         # Check if the new position is within a small radius of any previously visited position
         visit_radius = 8  # Define a small radius for the visit check
-        within_visited_area = any(np.linalg.norm(self.agent.position - np.array(visited_pos)) < visit_radius for visited_pos in self.visited_positions)
+
+        within_visited_area = np.any(np.linalg.norm(np.array(self.agent.position) - self.recent_positions, axis=1) < visit_radius)
         if within_visited_area:
-            reward_stationary = -0.01
+            if distance_to_goal < old_distance_to_goal:
+                reward_stationary = 0.0
+            else:
+                reward_stationary = -0.01
+            reward_proximity = 0.0
+            reward_orientation = 0.0
         else:
-            reward_stationary = 0.01
+            if distance_to_goal < old_distance_to_goal:
+                reward_stationary = 0.01
+            else:
+                reward_stationary = 0.0
+            # Orientation reward
+            if distance_to_goal < old_distance_to_goal: # only give reward if agent moves closer to the goal
+                reward_orientation = self.calc_gaussian_2(relative_orientation, 2) * np.sqrt((new_position[0] - old_position[0])**2 * (new_position[1] - old_position[1])**2) * 0.005 * 0.0
+                reward_proximity = (-1/self.screen_width * abs(distance_to_goal) + 1) * 0.05 #self.calc_gaussian(distance_to_goal, 0.0001 / ((self.grid_width)/10)) 
+                #self.record_distance = distance_to_goal
+            else:
+                reward_orientation = 0.0
+                reward_proximity = 0.0
 
-        # Update the list of visited positions
-        self.visited_positions.append(new_position)
-
+        reward_proximity = 0.0
+        reward_orientation = 0.0
 
         self.total_reward = reward_goal + reward_time_penalty + reward_proximity + reward_orientation + reward_collision_penalty + reward_visit + reward_lidar + reward_breadcrumb + reward_breadcrumb_proximity + reward_stationary
 
@@ -526,8 +494,9 @@ class ContinuousMazeEnv(gym.Env):
         #     truncated = False
         truncated = False
         state = np.concatenate(([self.relative_breadcrumb_position[0], self.relative_breadcrumb_position[1]], 
-                            self.lidar_readings, 
-                            normalized_recent_positions.flatten()), axis=0).astype(np.float32)
+                            self.lidar_readings,
+                            normalized_recent_positions.flatten(),
+                            ), axis=0).astype(np.float32)
         
         # Round the state to n decimal place
         state = np.round(state, 2)
@@ -634,9 +603,14 @@ class ContinuousMazeEnv(gym.Env):
         # Reset cumulative penalties and counters
         self.timesteps = 0.0
         self.visit_count = {}  # Reset visit count
-        
-        self.visited_positions = []
-        normalized_recent_positions = np.zeros((self.num_recent_positions, 2))
+        self.count = 0
+
+        #self.visited_positions = []
+        self.recent_positions = np.full((self.num_recent_positions, 2), np.array(self.agent.position))
+        self.initial_normalized_recent_positions = np.zeros((self.num_recent_positions, 2))
+
+        # self.heatmap = np.zeros((self.grid_width * 2 + 1, self.grid_height * 2 + 1), dtype=np.float32)
+        # flattened_heatmap = self.heatmap.flatten()
 
         num_rays = 8
         angles = np.linspace(0, np.pi + self.agent.orientation, num_rays, endpoint=False)
@@ -649,7 +623,8 @@ class ContinuousMazeEnv(gym.Env):
 
         initial_state = np.concatenate(([0, 0], 
                             self.lidar_readings, 
-                            normalized_recent_positions.flatten()), axis=0).astype(np.float32)
+                            self.initial_normalized_recent_positions.flatten()
+                            ), axis=0).astype(np.float32)
         
         # Round the initial state to n decimal place
         initial_state = np.round(initial_state, 2)
@@ -688,7 +663,7 @@ class ContinuousMazeEnv(gym.Env):
                     pygame.draw.rect(self.screen, (255, 255, 255), (x + 2 * self.cell_size, y + self.cell_size, self.cell_size, self.cell_size))
         
         # Draw visited positions as red circles
-        for pos in self.visited_positions:
+        for pos in self.recent_positions:
             pygame.draw.circle(self.screen, (255, 125, 0), (int(pos[0] * self.scale), int(pos[1] * self.scale)), 8)
 
 
@@ -737,7 +712,22 @@ class ContinuousMazeEnv(gym.Env):
             start_point = self.scale * np.array(self.agent.position)
             end_point = start_point + self.scale * distance * self.max_lidar_dist * np.array([np.cos(angle), np.sin(angle)])
             pygame.draw.line(self.screen, (0, 0, 255), start_point, end_point, 1)  # Blue lines for LiDAR rays
+        
+        # # Create a transparent heatmap surface
+        # heatmap_surface = pygame.Surface((self.screen_width, self.screen_height), pygame.SRCALPHA)
+        # heatmap_max = np.max(self.heatmap) if np.max(self.heatmap) > 0 else 1  # Avoid division by zero
 
+        # # Render heatmap on the transparent surface
+        # for i in range(self.grid_width * 2 + 1):
+        #     for j in range(self.grid_height * 2 + 1):
+        #         color_intensity = self.heatmap[i, j] / heatmap_max
+        #         color = (255, 0, 0, int(200 * color_intensity))  # Red color with varying intensity and transparency
+        #         x = i * self.cell_size
+        #         y = j * self.cell_size
+        #         pygame.draw.rect(heatmap_surface, color, (x, y, self.cell_size, self.cell_size), 0)  # Draw filled rectangle for heatmap
+
+        # # Blit the heatmap surface onto the main screen
+        # self.screen.blit(heatmap_surface, (0, 0))
 
         pygame.display.flip()
         self.clock.tick(self.metadata['render_fps'])
