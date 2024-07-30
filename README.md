@@ -31,7 +31,7 @@ Make sure to change the interpreter path of your IDE to "~/anaconda3/envs/2D_maz
 To generate the maze environment and move the agent manually, run `continous_maze_env.py` followed by `test_continuous_maze.py`
 To test the agent's ability to reach the goal in a simple environment (just an empty space without the maze), replace instances of the "generate_maze" method with "generate_empty_maze". 
 
-To train the model, run `train_continuous_maze.py`. Hyperparameters can be configured in `ppo_config.yaml`. I have also set up a training script for the popular "lunar_lander" gymnasium environment, (`train_lunar_lander.py`), which may prove a useful tool to benchmark your model.
+To train the model, run `train_continuous_maze.py`. Hyperparameters can be configured in `ppo_config.yaml`. 
 
 ## Remaining Work
 The agent is able to reach the goal some attempts, but it is not clear if this is due to random luck or if the agent actually knows to head towards the goal, maybe a mix of both. The best reward function I found had good sucess in getting the agent to explore, but it is not uncommon that agent goes in a complete opposite direction of the goal. The agent also has a tendency to get stuck running into walls after initial sucess exploring the environment. It is not clear what is causing this behavior. 
